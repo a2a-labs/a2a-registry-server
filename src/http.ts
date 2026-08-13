@@ -157,6 +157,7 @@ export function createRegistryHttpServer(service: RegistryService, config: Regis
     setCommonHeaders(res, config, context.requestId);
 
     try {
+      console.log("Processing request", req.method, req.url);
       if (req.method === "OPTIONS") {
         res.writeHead(204);
         res.end();
@@ -324,6 +325,7 @@ export function createRegistryHttpServer(service: RegistryService, config: Regis
         return;
       }
       if (req.method === "DELETE" && instanceRoute) {
+        console.log(`Unregistering ${instanceRoute.id}/${instanceRoute.instanceId}`)
         await service.unregisterInstance(instanceRoute.id, instanceRoute.instanceId, leaseToken(req), privileged);
         metrics.unregistrations += 1;
         res.writeHead(204);
