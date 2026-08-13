@@ -1,0 +1,33 @@
+services:
+  registry:
+    build: .
+    environment:
+      REGISTRY_PORT: "3003"
+      REGISTRY_PUBLIC_URL: http://localhost:3003
+      REGISTRY_STORE: etcd
+      ETCD_ENDPOINT: http://etcd:2379
+      REGISTRY_WRITE_TOKEN: local-development-token
+    ports:
+      - "3003:3003"
+    depends_on:
+      etcd:
+        condition: service_healthy
+
+  etcd:
+    image: gcr.io/etcd-development/etcd:v3.7.1
+    command:
+      - /usr/local/bin/etcd
+      - --name=registry-etcd
+      - --data-dir=/etcd-data
+      - --listen-client-urls=http://0.0.0.0:2379
+      - --advertise-client-urls=http://etcd:2379
+    volumes:
+      - etcd-data:/etcd-data
+    healthcheck:
+      test: ["CMD", "etcdctl", "endpoint", "health"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+volumes:
+  etcd-data:

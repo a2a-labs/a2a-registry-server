@@ -1,0 +1,49 @@
+{
+  "name": "a2a-registry-server",
+  "version": "0.1.0",
+  "description": "A lease-based registry and discovery server for A2A agents",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "bin": {
+    "a2a-registry": "./dist/cli.js"
+  },
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist",
+    "openapi.yaml"
+  ],
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "build": "tsc -p tsconfig.json && node -e \"require('node:fs').chmodSync('dist/cli.js', 0o755)\"",
+    "check": "tsc -p tsconfig.json --noEmit",
+    "dev": "tsx watch src/cli.ts",
+    "cli": "tsx src/cli.ts",
+    "start": "node dist/cli.js",
+    "test": "node --import tsx --test test/*.test.ts",
+    "test:watch": "node --import tsx --test --watch test/*.test.ts"
+  },
+  "keywords": [
+    "a2a",
+    "agent2agent",
+    "agent-registry",
+    "service-discovery",
+    "etcd"
+  ],
+  "license": "Apache-2.0",
+  "dependencies": {
+    "@a2a-js/sdk": "^1.0.1"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "tsx": "^4.20.3",
+    "typescript": "^5.9.2"
+  }
+}

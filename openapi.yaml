@@ -1,0 +1,209 @@
+openapi: 3.1.0
+info:
+  title: A2A Registry API
+  version: 0.1.0
+  description: Lease-based registration and discovery for A2A Agent Cards. This registry API is not an A2A task/message transport.
+servers:
+  - url: http://localhost:3003
+paths:
+  /v1/agents:
+    post:
+      summary: Register an agent
+      security:
+        - writeToken: []
+        - {}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RegistrationInput'
+      responses:
+        '201':
+          description: Registered. The lease token is returned only on creation.
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/RegistrationResponse'
+        '400': { $ref: '#/components/responses/Problem' }
+        '401': { $ref: '#/components/responses/Problem' }
+    get:
+      summary: Discover active agents
+      parameters:
+        - { name: skill, in: query, schema: { type: string } }
+        - { name: tag, in: query, schema: { type: string } }
+        - { name: capability, in: query, schema: { type: string } }
+        - { name: protocolBinding, in: query, schema: { type: string } }
+        - { name: name, in: query, schema: { type: string } }
+        - { name: cursor, in: query, schema: { type: string } }
+        - { name: limit, in: query, schema: { type: integer, minimum: 1, maximum: 500, default: 100 } }
+      responses:
+        '200':
+          description: Matching unexpired registrations
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [agents, total, revision]
+                properties:
+                  agents: { type: array, items: { $ref: '#/components/schemas/RegisteredAgent' } }
+                  total: { type: integer }
+                  nextCursor: { type: string }
+                  revision: { type: integer }
+  /v1/agents/{id}:
+    parameters:
+      - $ref: '#/components/parameters/AgentId'
+    get:
+      summary: Get an active registration
+      responses:
+        '200':
+          description: Registration
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  agent: { $ref: '#/components/schemas/RegisteredAgent' }
+        '404': { $ref: '#/components/responses/Problem' }
+    put:
+      summary: Create or replace a registration
+      security:
+        - leaseToken: []
+        - writeToken: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: '#/components/schemas/RegistrationInputWithoutId'
+      responses:
+        '200': { description: Updated }
+        '201': { description: Created }
+        '401': { $ref: '#/components/responses/Problem' }
+    delete:
+      summary: Unregister an agent
+      security:
+        - leaseToken: []
+        - writeToken: []
+      responses:
+        '204': { description: Unregistered }
+        '401': { $ref: '#/components/responses/Problem' }
+        '404': { $ref: '#/components/responses/Problem' }
+  /v1/agents/{id}/heartbeat:
+    parameters:
+      - $ref: '#/components/parameters/AgentId'
+    post:
+      summary: Renew an agent lease
+      security:
+        - leaseToken: []
+        - writeToken: []
+      responses:
+        '200': { description: Lease renewed }
+        '401': { $ref: '#/components/responses/Problem' }
+        '404': { $ref: '#/components/responses/Problem' }
+  /health/live:
+    get:
+      summary: Process liveness
+      responses:
+        '200': { description: Process is alive }
+  /health/ready:
+    get:
+      summary: Storage readiness
+      responses:
+        '200': { description: Ready }
+        '503': { description: Storage unavailable }
+  /metrics:
+    get:
+      summary: Prometheus metrics
+      responses:
+        '200':
+          description: Metrics
+          content:
+            text/plain: { schema: { type: string } }
+components:
+  securitySchemes:
+    writeToken:
+      type: http
+      scheme: bearer
+    leaseToken:
+      type: apiKey
+      in: header
+      name: X-Registry-Lease-Token
+  parameters:
+    AgentId:
+      name: id
+      in: path
+      required: true
+      schema: { type: string, pattern: '^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,127}$' }
+  responses:
+    Problem:
+      description: Error response
+      content:
+        application/json:
+          schema: { $ref: '#/components/schemas/Problem' }
+  schemas:
+    AgentCard:
+      type: object
+      description: A2A Agent Card. Unknown fields are preserved for forward compatibility.
+      required: [name]
+      properties:
+        name: { type: string }
+        description: { type: string }
+        version: { type: string }
+        supportedInterfaces:
+          type: array
+          items:
+            type: object
+            properties:
+              url: { type: string, format: uri }
+              protocolBinding: { type: string }
+              protocolVersion: { type: string }
+        capabilities: { type: object, additionalProperties: true }
+        skills: { type: array, items: { type: object, additionalProperties: true } }
+      additionalProperties: true
+    RegistrationInput:
+      allOf:
+        - $ref: '#/components/schemas/RegistrationInputWithoutId'
+        - type: object
+          required: [id]
+          properties:
+            id: { type: string, pattern: '^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,127}$' }
+    RegistrationInputWithoutId:
+      type: object
+      required: [agentCard]
+      properties:
+        endpoint: { type: string, format: uri }
+        agentCard: { $ref: '#/components/schemas/AgentCard' }
+        ttlSeconds: { type: integer, minimum: 1 }
+        metadata: { type: object, additionalProperties: { type: string } }
+    RegisteredAgent:
+      type: object
+      required: [id, name, endpoint, agentCard, ttlSeconds, registeredAt, updatedAt, lastSeen, expiresAt, metadata, revision]
+      properties:
+        id: { type: string }
+        name: { type: string }
+        endpoint: { type: string, format: uri }
+        agentCard: { $ref: '#/components/schemas/AgentCard' }
+        ttlSeconds: { type: integer }
+        registeredAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+        lastSeen: { type: string, format: date-time }
+        expiresAt: { type: string, format: date-time }
+        metadata: { type: object, additionalProperties: { type: string } }
+        revision: { type: integer }
+    RegistrationResponse:
+      type: object
+      required: [status, agent]
+      properties:
+        status: { type: string, enum: [registered, updated] }
+        agent: { $ref: '#/components/schemas/RegisteredAgent' }
+        leaseToken: { type: string, description: Returned only when a registration is created. }
+    Problem:
+      type: object
+      required: [type, title, status, detail, requestId]
+      properties:
+        type: { type: string, format: uri }
+        title: { type: string }
+        status: { type: integer }
+        detail: { type: string }
+        requestId: { type: string }
