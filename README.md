@@ -1,6 +1,6 @@
 # A2A Registry Server
 
-A lease-based registration and discovery service for AI agents that publish [A2A Agent Cards](https://a2a-protocol.org/latest/specification/). It turns the original single-file PoC into a small server with ownership tokens, TTL heartbeats, filtering, pagination, caching, metrics, tests, and an optional distributed etcd store.
+A lease-based registration and discovery service for logical AI agents that publish [A2A Agent Cards](https://a2a-protocol.org/latest/specification/). A logical agent can expose multiple independently leased runtime instances that share one Agent Card. The server also provides ownership tokens, TTL heartbeats, filtering, pagination, caching, metrics, tests, and an optional distributed etcd store.
 
 This project is a registry **for** A2A agents. Its registry REST API is intentionally separate from the A2A task/message protocol. The A2A specification standardizes Agent Cards and describes registries/catalogs as a discovery mechanism, but it does not prescribe one universal registry API.
 
@@ -9,7 +9,8 @@ This project is a registry **for** A2A agents. Its registry REST API is intentio
 - Stores current A2A 1.0 Agent Cards without stripping unknown fields
 - Accepts both v1 `supportedInterfaces[].url` and the legacy card `url`
 - Lease/heartbeat model inspired by etcd and Consul TTL checks
-- Per-registration lease token prevents another client from replacing or deleting an ID
+- Multiple runtime instances per logical agent, with a shared Agent Card
+- Per-instance endpoint, metadata, TTL, lease token, heartbeat, and expiry
 - Optional global write bearer token controls who may create registrations
 - Discovery by skill, skill tag, capability, protocol binding, or agent name
 - Cursor pagination, ETags, readiness/liveness probes, Prometheus text metrics
@@ -104,24 +105,57 @@ curl -X DELETE http://localhost:3003/v1/agents/weather-eu-1 \
   -H "X-Registry-Lease-Token: $AGENT_LEASE_TOKEN"
 ```
 
-Send a heartbeat well before `ttlSeconds` elapses—normally every one-third of the TTL, with jitter and retry backoff.
+Send a heartbeat well before `ttlSeconds` elapses—normally every one-third of the TTL, with jitter and retry backoff. Registrations that omit `instanceId` use the compatibility instance named `default`, so existing clients continue to work.
+
+## Multiple instances
+
+Register named instances with the same logical agent ID and exactly the same Agent Card. Put the instance-specific URL in `endpoint`; the shared card may advertise a stable load-balancer URL while discovery clients can select from `agent.instances` directly.
+
+```bash
+curl -i http://localhost:3003/v1/agents/weather/instances \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "instanceId": "eu-west-1a",
+    "endpoint": "https://weather-a.example/a2a",
+    "ttlSeconds": 60,
+    "metadata": { "zone": "eu-west-1a", "weight": "100" },
+    "agentCard": { "name": "Weather Agent", "supportedInterfaces": [{ "url": "https://weather.example/a2a" }] }
+  }'
+
+curl -i http://localhost:3003/v1/agents/weather/instances \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "instanceId": "eu-west-1b",
+    "endpoint": "https://weather-b.example/a2a",
+    "ttlSeconds": 60,
+    "metadata": { "zone": "eu-west-1b", "weight": "100" },
+    "agentCard": { "name": "Weather Agent", "supportedInterfaces": [{ "url": "https://weather.example/a2a" }] }
+  }'
+```
+
+Each response has a different `leaseToken`. Heartbeat an instance at `/v1/agents/{id}/instances/{instanceId}/heartbeat`. Discovery returns one logical agent containing both active records in `instances`; an instance disappears independently when its lease expires. While multiple instances are active, a registration with a different Agent Card is rejected with `409 agent_card_mismatch`.
 
 ## API
 
 | Method | Path | Purpose |
 |---|---|---|
-| `POST` | `/v1/agents` | Create a registration |
-| `PUT` | `/v1/agents/{id}` | Create or replace a registration |
-| `POST` | `/v1/agents/{id}/heartbeat` | Renew its lease |
-| `GET` | `/v1/agents` | Discover active agents |
-| `GET` | `/v1/agents/{id}` | Fetch one registration and Agent Card |
-| `DELETE` | `/v1/agents/{id}` | Unregister it |
+| `POST` | `/v1/agents` | Register an instance (`default` when `instanceId` is omitted) |
+| `GET` | `/v1/agents` | Discover logical agents and active instances |
+| `GET` | `/v1/agents/{id}` | Fetch one logical agent and its active instances |
+| `POST` | `/v1/agents/{id}/instances` | Register a named instance |
+| `GET` | `/v1/agents/{id}/instances` | List active instances |
+| `PUT` | `/v1/agents/{id}/instances/{instanceId}` | Create or replace a named instance |
+| `GET` | `/v1/agents/{id}/instances/{instanceId}` | Fetch a named instance |
+| `POST` | `/v1/agents/{id}/instances/{instanceId}/heartbeat` | Renew a named instance lease |
+| `DELETE` | `/v1/agents/{id}/instances/{instanceId}` | Unregister a named instance |
+| `PUT`, `DELETE` | `/v1/agents/{id}` | Create/replace or remove the `default` instance |
+| `POST` | `/v1/agents/{id}/heartbeat` | Renew the `default` instance lease |
 | `GET` | `/health/live` | Process liveness |
 | `GET` | `/health/ready` | Storage readiness |
 | `GET` | `/metrics` | Prometheus text metrics |
 | `GET` | `/openapi.yaml` | OpenAPI 3.1 document |
 
-Discovery accepts `skill`, `tag`, `capability`, `protocolBinding`, `name`, `limit`, and `cursor`. The list only includes unexpired registrations.
+Discovery accepts `skill`, `tag`, `capability`, `protocolBinding`, `name`, `limit`, and `cursor`. Pagination and `total` count logical agents, and only logical agents with at least one unexpired instance are returned. The top-level instance fields (`endpoint`, TTL, timestamps, and metadata) remain as a compatibility projection of the `default` or first active instance; new clients should use `instances`.
 
 PoC-compatible aliases remain available at `/v1/registry`, `/v1/registry/register`, `/v1/registry/agents`, and `/v1/registry/heartbeat`. They use the new ownership rules.
 
@@ -150,14 +184,14 @@ PoC-compatible aliases remain available at `/v1/registry`, `/v1/registry/registe
 docker compose up --build
 ```
 
-The etcd adapter grants a lease for each registration and attaches the registry key to it. A heartbeat atomically reattaches the key to a new lease and revokes the previous lease. When the agent stops renewing, etcd removes the key even if the registry process that accepted it has failed. All registry replicas must use the same `ETCD_PREFIX` and cluster.
+The etcd adapter grants a lease for each runtime instance and attaches that instance's registry key to it. A heartbeat atomically reattaches the key to a new lease and revokes the previous lease. When an instance stops renewing, etcd removes only that instance key even if the registry process that accepted it has failed. All registry replicas must use the same `ETCD_PREFIX` and cluster.
 
 For production, enable etcd authentication and TLS, use a dedicated least-privilege role restricted to the registry prefix, and run an odd-sized etcd cluster. The current adapter accepts an HTTPS endpoint but does not yet expose custom CA/client-certificate file settings.
 
 ## Security model
 
 - `REGISTRY_WRITE_TOKEN` is an enrollment control; enable it outside trusted development networks.
-- `X-Registry-Lease-Token` proves ownership of one registration. Only its SHA-256 hash is stored.
+- `X-Registry-Lease-Token` proves ownership of one runtime instance. Only its SHA-256 hash is stored.
 - Put TLS and an identity-aware proxy/API gateway in front of the server. A shared write token is not a replacement for OAuth2, workload identity, or mTLS.
 - The server validates structure and URLs but does not fetch an endpoint during registration, avoiding a registration-time SSRF path.
 - Agent Cards are public discovery metadata. Do not place credentials or internal secrets in them.
@@ -169,7 +203,7 @@ For production, enable etcd authentication and TLS, use a dedicated least-privil
 2. **Trust:** verify A2A Agent Card JWS signatures, restrict `jku` origins, maintain trusted issuers/keys, and record verification status without modifying the signed card.
 3. **Active health checks:** optional HTTP/TCP/gRPC probes and passing/warning/critical states, similar to Consul. Keep active checks separate from agent-driven TTL heartbeats.
 4. **Watch API:** Server-Sent Events or gRPC streaming over storage revisions so clients can update a local resolver without polling. etcd watches or Consul blocking queries are natural backends.
-5. **Multiple instances and locality:** model a logical agent/service separately from instances, then support zone/region/weight/health-aware selection and client-side round-robin.
+5. **Locality-aware resolution:** add first-class zone/region/weight fields, health-aware selection, and optional client-side round-robin helpers. Until then these values can be carried in per-instance metadata.
 6. **Consul adapter:** use Consul sessions/TTL checks and KV/catalog metadata when an organization already operates Consul.
 7. **Operations:** OpenTelemetry traces, labeled/rate metrics with bounded cardinality, rate limiting, quotas, backups, chaos tests, and SLO dashboards.
 8. **Governance:** moderation/approval workflows, metadata schemas, retention, version compatibility policy, and a documented response to compromised registrations.

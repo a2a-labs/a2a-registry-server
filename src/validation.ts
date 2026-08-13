@@ -18,12 +18,20 @@ function nonEmptyString(value: unknown, field: string, maximum = 2048): string {
   return value.trim();
 }
 
-export function validateId(value: unknown): string {
-  const id = nonEmptyString(value, "id", 128);
+function validateIdentifier(value: unknown, field: string): string {
+  const id = nonEmptyString(value, field, 128);
   if (!ID_PATTERN.test(id)) {
-    throw new RegistryError(400, "invalid_request", "id may contain letters, numbers, '.', '_', ':', and '-' only");
+    throw new RegistryError(400, "invalid_request", `${field} may contain letters, numbers, '.', '_', ':', and '-' only`);
   }
   return id;
+}
+
+export function validateId(value: unknown): string {
+  return validateIdentifier(value, "id");
+}
+
+export function validateInstanceId(value: unknown): string {
+  return validateIdentifier(value, "instanceId");
 }
 
 function validateEndpoint(value: unknown, field: string): string {
@@ -108,6 +116,7 @@ export function parseRegistration(value: unknown): RegistrationInput {
 
   return {
     id: validateId(input.id),
+    ...(input.instanceId === undefined ? {} : { instanceId: validateInstanceId(input.instanceId) }),
     endpoint: validateEndpoint(rawEndpoint, "endpoint"),
     agentCard,
     ...(ttlSeconds === undefined ? {} : { ttlSeconds }),

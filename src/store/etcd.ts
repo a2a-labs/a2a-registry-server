@@ -87,9 +87,9 @@ export class EtcdRegistryStore implements RegistryStore {
     }
   }
 
-  async get(id: string): Promise<StoredAgent | undefined> {
+  async get(id: string, instanceId: string): Promise<StoredAgent | undefined> {
     const response = await this.request<{ kvs?: EtcdKeyValue[] }>("/v3/kv/range", {
-      key: base64(this.key(id)),
+      key: base64(this.key(id, instanceId)),
     });
     const entry = response.kvs?.[0];
     return entry ? this.decode(entry) : undefined;
@@ -116,7 +116,7 @@ export class EtcdRegistryStore implements RegistryStore {
   }
 
   async delete(agent: StoredAgent): Promise<boolean> {
-    const key = base64(this.key(agent.id));
+    const key = base64(this.key(agent.id, agent.instanceId));
     const response = agent.backendRevision
       ? await this.request<EtcdTransactionResponse>("/v3/kv/txn", {
           compare: [{ key, target: "MOD", mod_revision: agent.backendRevision, result: "EQUAL" }],
@@ -140,7 +140,7 @@ export class EtcdRegistryStore implements RegistryStore {
     const leaseId = String(grant.ID);
     agent.backendLeaseId = leaseId;
     try {
-      const key = base64(this.key(agent.id));
+      const key = base64(this.key(agent.id, agent.instanceId));
       const compare = agent.backendRevision
         ? { key, target: "MOD", mod_revision: agent.backendRevision, result: "EQUAL" }
         : { key, target: "VERSION", version: "0", result: "EQUAL" };
@@ -165,13 +165,15 @@ export class EtcdRegistryStore implements RegistryStore {
     await this.request("/v3/lease/revoke", { ID: id });
   }
 
-  private key(id: string): string {
-    return `${this.#prefix}${encodeURIComponent(id)}`;
+  private key(id: string, instanceId: string): string {
+    const agentKey = `${this.#prefix}${encodeURIComponent(id)}`;
+    return instanceId === "default" ? agentKey : `${agentKey}/instances/${encodeURIComponent(instanceId)}`;
   }
 
   private decode(entry: EtcdKeyValue): StoredAgent {
     try {
       const agent = JSON.parse(unbase64(entry.value)) as StoredAgent;
+      agent.instanceId ??= "default";
       if (entry.mod_revision) agent.backendRevision = entry.mod_revision;
       return agent;
     } catch (error) {

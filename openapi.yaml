@@ -1,14 +1,15 @@
 openapi: 3.1.0
 info:
   title: A2A Registry API
-  version: 0.1.0
-  description: Lease-based registration and discovery for A2A Agent Cards. This registry API is not an A2A task/message transport.
+  version: 0.2.0
+  description: Lease-based registration and discovery for logical A2A agents with independently leased runtime instances. This registry API is not an A2A task/message transport.
 servers:
   - url: http://localhost:3003
 paths:
   /v1/agents:
     post:
-      summary: Register an agent
+      summary: Register an agent instance
+      description: Registrations without instanceId use the backward-compatible default instance.
       security:
         - writeToken: []
         - {}
@@ -27,6 +28,7 @@ paths:
                 $ref: '#/components/schemas/RegistrationResponse'
         '400': { $ref: '#/components/responses/Problem' }
         '401': { $ref: '#/components/responses/Problem' }
+        '409': { $ref: '#/components/responses/Problem' }
     get:
       summary: Discover active agents
       parameters:
@@ -39,7 +41,7 @@ paths:
         - { name: limit, in: query, schema: { type: integer, minimum: 1, maximum: 500, default: 100 } }
       responses:
         '200':
-          description: Matching unexpired registrations
+          description: Matching logical agents with at least one active instance
           content:
             application/json:
               schema:
@@ -54,7 +56,7 @@ paths:
     parameters:
       - $ref: '#/components/parameters/AgentId'
     get:
-      summary: Get an active registration
+      summary: Get a logical agent and its active instances
       responses:
         '200':
           description: Registration
@@ -66,7 +68,7 @@ paths:
                   agent: { $ref: '#/components/schemas/RegisteredAgent' }
         '404': { $ref: '#/components/responses/Problem' }
     put:
-      summary: Create or replace a registration
+      summary: Create or replace the default instance
       security:
         - leaseToken: []
         - writeToken: []
@@ -81,7 +83,7 @@ paths:
         '201': { description: Created }
         '401': { $ref: '#/components/responses/Problem' }
     delete:
-      summary: Unregister an agent
+      summary: Unregister the default instance
       security:
         - leaseToken: []
         - writeToken: []
@@ -93,7 +95,90 @@ paths:
     parameters:
       - $ref: '#/components/parameters/AgentId'
     post:
-      summary: Renew an agent lease
+      summary: Renew the default instance lease
+      security:
+        - leaseToken: []
+        - writeToken: []
+      responses:
+        '200': { description: Lease renewed }
+        '401': { $ref: '#/components/responses/Problem' }
+        '404': { $ref: '#/components/responses/Problem' }
+  /v1/agents/{id}/instances:
+    parameters:
+      - $ref: '#/components/parameters/AgentId'
+    get:
+      summary: List active instances of a logical agent
+      responses:
+        '200':
+          description: Active instances
+          content:
+            application/json:
+              schema:
+                type: object
+                required: [instances, total]
+                properties:
+                  instances: { type: array, items: { $ref: '#/components/schemas/AgentInstance' } }
+                  total: { type: integer }
+        '404': { $ref: '#/components/responses/Problem' }
+    post:
+      summary: Register a named instance under a logical agent
+      security:
+        - writeToken: []
+        - {}
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/InstanceRegistrationInput' }
+      responses:
+        '200': { description: Updated }
+        '201':
+          description: Registered with a new per-instance lease token
+          content:
+            application/json:
+              schema: { $ref: '#/components/schemas/RegistrationResponse' }
+        '400': { $ref: '#/components/responses/Problem' }
+        '401': { $ref: '#/components/responses/Problem' }
+        '409': { $ref: '#/components/responses/Problem' }
+  /v1/agents/{id}/instances/{instanceId}:
+    parameters:
+      - $ref: '#/components/parameters/AgentId'
+      - $ref: '#/components/parameters/InstanceId'
+    get:
+      summary: Get one active agent instance
+      responses:
+        '200': { description: Active instance }
+        '404': { $ref: '#/components/responses/Problem' }
+    put:
+      summary: Create or replace one named instance
+      security:
+        - leaseToken: []
+        - writeToken: []
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: '#/components/schemas/RegistrationInputWithoutId' }
+      responses:
+        '200': { description: Updated }
+        '201': { description: Registered }
+        '401': { $ref: '#/components/responses/Problem' }
+        '409': { $ref: '#/components/responses/Problem' }
+    delete:
+      summary: Unregister one named instance
+      security:
+        - leaseToken: []
+        - writeToken: []
+      responses:
+        '204': { description: Unregistered }
+        '401': { $ref: '#/components/responses/Problem' }
+        '404': { $ref: '#/components/responses/Problem' }
+  /v1/agents/{id}/instances/{instanceId}/heartbeat:
+    parameters:
+      - $ref: '#/components/parameters/AgentId'
+      - $ref: '#/components/parameters/InstanceId'
+    post:
+      summary: Renew one named instance lease
       security:
         - leaseToken: []
         - writeToken: []
@@ -135,6 +220,11 @@ components:
       in: path
       required: true
       schema: { type: string, pattern: '^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,127}$' }
+    InstanceId:
+      name: instanceId
+      in: path
+      required: true
+      schema: { type: string, pattern: '^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,127}$' }
   responses:
     Problem:
       description: Error response
@@ -168,6 +258,14 @@ components:
           required: [id]
           properties:
             id: { type: string, pattern: '^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,127}$' }
+            instanceId: { type: string, pattern: '^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,127}$', default: default }
+    InstanceRegistrationInput:
+      allOf:
+        - $ref: '#/components/schemas/RegistrationInputWithoutId'
+        - type: object
+          required: [instanceId]
+          properties:
+            instanceId: { type: string, pattern: '^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,127}$' }
     RegistrationInputWithoutId:
       type: object
       required: [agentCard]
@@ -178,12 +276,27 @@ components:
         metadata: { type: object, additionalProperties: { type: string } }
     RegisteredAgent:
       type: object
-      required: [id, name, endpoint, agentCard, ttlSeconds, registeredAt, updatedAt, lastSeen, expiresAt, metadata, revision]
+      required: [id, name, agentCard, instances, instanceCount, endpoint, ttlSeconds, registeredAt, updatedAt, lastSeen, expiresAt, metadata, revision]
       properties:
         id: { type: string }
         name: { type: string }
-        endpoint: { type: string, format: uri }
         agentCard: { $ref: '#/components/schemas/AgentCard' }
+        instances: { type: array, minItems: 1, items: { $ref: '#/components/schemas/AgentInstance' } }
+        instanceCount: { type: integer, minimum: 1 }
+        endpoint: { type: string, format: uri, description: Compatibility projection of the default or first active instance. }
+        ttlSeconds: { type: integer }
+        registeredAt: { type: string, format: date-time }
+        updatedAt: { type: string, format: date-time }
+        lastSeen: { type: string, format: date-time }
+        expiresAt: { type: string, format: date-time }
+        metadata: { type: object, additionalProperties: { type: string } }
+        revision: { type: integer }
+    AgentInstance:
+      type: object
+      required: [instanceId, endpoint, ttlSeconds, registeredAt, updatedAt, lastSeen, expiresAt, metadata, revision]
+      properties:
+        instanceId: { type: string }
+        endpoint: { type: string, format: uri }
         ttlSeconds: { type: integer }
         registeredAt: { type: string, format: date-time }
         updatedAt: { type: string, format: date-time }
@@ -193,10 +306,11 @@ components:
         revision: { type: integer }
     RegistrationResponse:
       type: object
-      required: [status, agent]
+      required: [status, agent, instance]
       properties:
         status: { type: string, enum: [registered, updated] }
         agent: { $ref: '#/components/schemas/RegisteredAgent' }
+        instance: { $ref: '#/components/schemas/AgentInstance' }
         leaseToken: { type: string, description: Returned only when a registration is created. }
     Problem:
       type: object

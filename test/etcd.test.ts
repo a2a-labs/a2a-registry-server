@@ -17,6 +17,7 @@ function response(payload: unknown): Response {
 function agent(): StoredAgent {
   return {
     id: "agent-1",
+    instanceId: "default",
     name: "Agent",
     endpoint: "https://example.test/a2a",
     agentCard: { name: "Agent" } as AgentCard,
@@ -59,6 +60,27 @@ describe("etcd store", () => {
     });
     assert.equal(record.backendLeaseId, "101");
     assert.equal(record.backendRevision, "7");
+  });
+
+  it("stores named instances below an agent-specific key", async () => {
+    const requests: Array<{ path: string; body: Record<string, unknown> }> = [];
+    globalThis.fetch = async (input, init) => {
+      const path = new URL(String(input)).pathname;
+      const body = JSON.parse(String(init?.body ?? "{}")) as Record<string, unknown>;
+      requests.push({ path, body });
+      if (path === "/v3/lease/grant") return response({ ID: "103" });
+      if (path === "/v3/kv/txn") return response({ succeeded: true });
+      return response({});
+    };
+
+    const store = new EtcdRegistryStore({ endpoint: "http://etcd:2379", prefix: "/agents/" });
+    const record = agent();
+    record.instanceId = "eu-west-2";
+    await store.put(record);
+
+    const transaction = requests.find((request) => request.path === "/v3/kv/txn");
+    assert.deepEqual((transaction?.body.compare as Array<{ key: string }>)[0]?.key,
+      Buffer.from("/agents/agent-1/instances/eu-west-2").toString("base64"));
   });
 
   it("rejects a failed compare-and-swap and revokes the unused lease", async () => {

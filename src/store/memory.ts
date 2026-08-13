@@ -29,10 +29,11 @@ export class MemoryRegistryStore implements RegistryStore {
     return true;
   }
 
-  async get(id: string): Promise<StoredAgent | undefined> {
-    const agent = this.#agents.get(id);
+  async get(id: string, instanceId: string): Promise<StoredAgent | undefined> {
+    const key = this.key(id, instanceId);
+    const agent = this.#agents.get(key);
     if (agent && this.isExpired(agent)) {
-      this.#agents.delete(id);
+      this.#agents.delete(key);
       return undefined;
     }
     return agent === undefined ? undefined : structuredClone(agent);
@@ -44,19 +45,23 @@ export class MemoryRegistryStore implements RegistryStore {
   }
 
   async put(agent: StoredAgent): Promise<void> {
-    this.#agents.set(agent.id, structuredClone(agent));
+    this.#agents.set(this.key(agent.id, agent.instanceId), structuredClone(agent));
   }
 
   async renew(agent: StoredAgent): Promise<void> {
-    this.#agents.set(agent.id, structuredClone(agent));
+    this.#agents.set(this.key(agent.id, agent.instanceId), structuredClone(agent));
   }
 
   async delete(agent: StoredAgent): Promise<boolean> {
-    return this.#agents.delete(agent.id);
+    return this.#agents.delete(this.key(agent.id, agent.instanceId));
   }
 
   private isExpired(agent: StoredAgent): boolean {
     return Date.parse(agent.expiresAt) <= this.#clock.now();
+  }
+
+  private key(id: string, instanceId: string): string {
+    return instanceId === "default" ? id : `${id}\u0000${instanceId}`;
   }
 
   private prune(): void {

@@ -99,6 +99,101 @@ describe("registry HTTP API", () => {
     assert.equal(heartbeat.status, 200);
   });
 
+  it("groups independently leased instances under one logical Agent Card", async () => {
+    const firstResponse = await fetch(`${baseUrl}/v1/agents`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        id: "weather-cluster",
+        instanceId: "eu-west-1a",
+        endpoint: "https://weather-a.example/a2a",
+        agentCard: card,
+        ttlSeconds: 30,
+        metadata: { zone: "eu-west-1a" },
+      }),
+    });
+    assert.equal(firstResponse.status, 201);
+    const first = await firstResponse.json() as { leaseToken: string };
+
+    const secondResponse = await fetch(`${baseUrl}/v1/agents/weather-cluster/instances`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        instanceId: "eu-west-1b",
+        endpoint: "https://weather-b.example/a2a",
+        agentCard: card,
+        ttlSeconds: 45,
+        metadata: { zone: "eu-west-1b" },
+      }),
+    });
+    assert.equal(secondResponse.status, 201);
+    const second = await secondResponse.json() as { leaseToken: string };
+    assert.notEqual(first.leaseToken, second.leaseToken);
+
+    const logicalResponse = await fetch(`${baseUrl}/v1/agents/weather-cluster`);
+    assert.equal(logicalResponse.status, 200);
+    const logical = await logicalResponse.json() as {
+      agent: { id: string; instanceCount: number; instances: Array<{ instanceId: string; endpoint: string }> };
+    };
+    assert.equal(logical.agent.id, "weather-cluster");
+    assert.equal(logical.agent.instanceCount, 2);
+    assert.deepEqual(logical.agent.instances.map((instance) => instance.instanceId), ["eu-west-1a", "eu-west-1b"]);
+    assert.deepEqual(logical.agent.instances.map((instance) => instance.endpoint), [
+      "https://weather-a.example/a2a", "https://weather-b.example/a2a",
+    ]);
+
+    const instancesResponse = await fetch(`${baseUrl}/v1/agents/weather-cluster/instances`);
+    const instances = await instancesResponse.json() as { total: number; instances: Array<{ instanceId: string }> };
+    assert.equal(instancesResponse.status, 200);
+    assert.equal(instances.total, 2);
+    assert.deepEqual(instances.instances.map((instance) => instance.instanceId), ["eu-west-1a", "eu-west-1b"]);
+
+    const instanceResponse = await fetch(`${baseUrl}/v1/agents/weather-cluster/instances/eu-west-1b`);
+    assert.equal(instanceResponse.status, 200);
+    assert.ok(instanceResponse.headers.get("etag"));
+
+    const updatedResponse = await fetch(`${baseUrl}/v1/agents/weather-cluster/instances/eu-west-1b`, {
+      method: "PUT",
+      headers: { "content-type": "application/json", "x-registry-lease-token": second.leaseToken },
+      body: JSON.stringify({ endpoint: "https://weather-b2.example/a2a", agentCard: card, ttlSeconds: 45 }),
+    });
+    assert.equal(updatedResponse.status, 200);
+    const updated = await updatedResponse.json() as { instance: { endpoint: string }; leaseToken?: string };
+    assert.equal(updated.instance.endpoint, "https://weather-b2.example/a2a");
+    assert.equal(updated.leaseToken, undefined);
+
+    const wrongLease = await fetch(`${baseUrl}/v1/agents/weather-cluster/instances/eu-west-1b/heartbeat`, {
+      method: "POST",
+      headers: { "x-registry-lease-token": first.leaseToken },
+    });
+    assert.equal(wrongLease.status, 401);
+    const heartbeat = await fetch(`${baseUrl}/v1/agents/weather-cluster/instances/eu-west-1b/heartbeat`, {
+      method: "POST",
+      headers: { "x-registry-lease-token": second.leaseToken },
+    });
+    assert.equal(heartbeat.status, 200);
+
+    const mismatched = await fetch(`${baseUrl}/v1/agents/weather-cluster/instances`, {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({
+        instanceId: "eu-west-1c",
+        endpoint: "https://weather-c.example/a2a",
+        agentCard: { ...card, name: "A Different Agent" },
+      }),
+    });
+    assert.equal(mismatched.status, 409);
+
+    for (const [instanceId, token] of [["eu-west-1a", first.leaseToken], ["eu-west-1b", second.leaseToken]]) {
+      const removed = await fetch(`${baseUrl}/v1/agents/weather-cluster/instances/${instanceId}`, {
+        method: "DELETE",
+        headers: { "x-registry-lease-token": token },
+      });
+      assert.equal(removed.status, 204);
+    }
+    assert.equal((await fetch(`${baseUrl}/v1/agents/weather-cluster`)).status, 404);
+  });
+
   it("serves its OpenAPI contract and honors discovery ETags", async () => {
     const contract = await fetch(`${baseUrl}/openapi.yaml`);
     assert.equal(contract.status, 200);
@@ -123,6 +218,26 @@ describe("lease expiry", () => {
     now += 2001;
     await assert.rejects(() => service.get("expiring"), (error: unknown) =>
       error instanceof Error && error.message.includes("lease expired"));
+    await service.stop();
+  });
+
+  it("expires instances independently and keeps the logical agent discoverable", async () => {
+    let now = 2_000_000;
+    const clock = { now: () => now };
+    const store = new MemoryRegistryStore(1000, clock);
+    const service = new RegistryService(store, { defaultTtlSeconds: 10, minTtlSeconds: 1, maxTtlSeconds: 60, clock });
+    await service.start();
+    await service.register({
+      id: "cluster", instanceId: "short", endpoint: "https://short.example/a2a", agentCard: card, ttlSeconds: 2,
+    });
+    await service.register({
+      id: "cluster", instanceId: "long", endpoint: "https://long.example/a2a", agentCard: card, ttlSeconds: 5,
+    });
+    now += 2001;
+    const agent = await service.get("cluster");
+    assert.equal(agent.instanceCount, 1);
+    assert.equal(agent.instances[0]?.instanceId, "long");
+    await assert.rejects(() => service.getInstance("cluster", "short"), /lease expired/);
     await service.stop();
   });
 

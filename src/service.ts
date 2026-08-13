@@ -1,6 +1,8 @@
 import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
+import { isDeepStrictEqual } from "node:util";
 import { RegistryError } from "./errors.js";
 import type {
+  AgentInstance,
   AgentPage,
   AgentQuery,
   Clock,
@@ -12,6 +14,7 @@ import type {
 } from "./types.js";
 
 const systemClock: Clock = { now: () => Date.now() };
+export const DEFAULT_INSTANCE_ID = "default";
 
 function hashToken(token: string): string {
   return createHash("sha256").update(token).digest("hex");
@@ -23,16 +26,41 @@ function tokenMatches(token: string, expectedHash: string): boolean {
   return actual.length === expected.length && timingSafeEqual(actual, expected);
 }
 
-function publicAgent(agent: StoredAgent): RegisteredAgent {
-  const { leaseTokenHash: _, backendLeaseId: __, backendRevision: ___, ...result } = agent;
+function publicInstance(agent: StoredAgent): AgentInstance {
+  const {
+    id: _, name: __, agentCard: ___, leaseTokenHash: ____, backendLeaseId: _____,
+    backendRevision: ______, ...result
+  } = agent;
   return result;
+}
+
+function logicalAgent(records: StoredAgent[]): RegisteredAgent {
+  if (records.length === 0) throw new Error("Cannot build a logical agent without an active instance");
+  const sorted = [...records].sort((left, right) => left.instanceId.localeCompare(right.instanceId));
+  const primary = sorted.find((record) => record.instanceId === DEFAULT_INSTANCE_ID) ?? sorted[0]!;
+  const instances = sorted.map(publicInstance);
+  return {
+    id: primary.id,
+    name: primary.name,
+    agentCard: primary.agentCard,
+    instances,
+    instanceCount: instances.length,
+    endpoint: primary.endpoint,
+    ttlSeconds: primary.ttlSeconds,
+    registeredAt: sorted.reduce((earliest, record) => record.registeredAt < earliest ? record.registeredAt : earliest, primary.registeredAt),
+    updatedAt: sorted.reduce((latest, record) => record.updatedAt > latest ? record.updatedAt : latest, primary.updatedAt),
+    lastSeen: sorted.reduce((latest, record) => record.lastSeen > latest ? record.lastSeen : latest, primary.lastSeen),
+    expiresAt: sorted.reduce((latest, record) => record.expiresAt > latest ? record.expiresAt : latest, primary.expiresAt),
+    metadata: primary.metadata,
+    revision: Math.max(...sorted.map((record) => record.revision)),
+  };
 }
 
 function lower(value: unknown): string {
   return typeof value === "string" ? value.toLowerCase() : "";
 }
 
-function matches(agent: StoredAgent, query: AgentQuery): boolean {
+function matches(agent: RegisteredAgent, query: AgentQuery): boolean {
   const card = agent.agentCard as unknown as JsonObject;
   if (query.name && !agent.name.toLowerCase().includes(query.name.toLowerCase())) return false;
 
@@ -90,6 +118,7 @@ function decodeCursor(cursor: string): string {
 
 export interface RegisterResult {
   agent: RegisteredAgent;
+  instance: AgentInstance;
   created: boolean;
   leaseToken?: string;
 }
@@ -138,11 +167,18 @@ export class RegistryService {
     privileged = false,
     creationAuthorized = true,
   ): Promise<RegisterResult> {
-    const existing = await this.#store.get(input.id);
+    const instanceId = input.instanceId ?? DEFAULT_INSTANCE_ID;
+    const existing = await this.#store.get(input.id, instanceId);
     if (!existing && !creationAuthorized) {
-      throw new RegistryError(401, "write_auth_required", "A valid bearer token is required to register a new agent");
+      throw new RegistryError(401, "write_auth_required", "A valid bearer token is required to register a new agent instance");
     }
     if (existing && !privileged) this.assertOwner(existing, leaseToken);
+
+    const siblings = (await this.#store.list()).filter((agent) => agent.id === input.id && agent.instanceId !== instanceId);
+    const sharedCard = siblings[0]?.agentCard;
+    if (sharedCard && !isDeepStrictEqual(sharedCard, input.agentCard)) {
+      throw new RegistryError(409, "agent_card_mismatch", `All active instances of agent '${input.id}' must publish the same Agent Card`);
+    }
 
     const ttlSeconds = input.ttlSeconds ?? this.#defaultTtl;
     if (ttlSeconds < this.#minTtl || ttlSeconds > this.#maxTtl) {
@@ -155,6 +191,7 @@ export class RegistryService {
     const card = input.agentCard as unknown as JsonObject;
     const agent: StoredAgent = {
       id: input.id,
+      instanceId,
       name: typeof card.name === "string" ? card.name : input.id,
       endpoint: input.endpoint ?? "",
       agentCard: input.agentCard,
@@ -170,15 +207,30 @@ export class RegistryService {
       ...(existing?.backendRevision === undefined ? {} : { backendRevision: existing.backendRevision }),
     };
     await this.#store.put(agent);
+    const aggregate = logicalAgent([...siblings, agent]);
     return {
-      agent: publicAgent(agent),
+      agent: aggregate,
+      instance: publicInstance(agent),
       created: existing === undefined,
       ...(generatedToken === undefined ? {} : { leaseToken: generatedToken }),
     };
   }
 
-  async heartbeat(id: string, leaseToken?: string, privileged = false): Promise<RegisteredAgent> {
-    const agent = await this.#required(id);
+  async heartbeat(
+    id: string,
+    leaseToken?: string,
+    privileged = false,
+  ): Promise<RegisteredAgent> {
+    return (await this.heartbeatInstance(id, DEFAULT_INSTANCE_ID, leaseToken, privileged)).agent;
+  }
+
+  async heartbeatInstance(
+    id: string,
+    instanceId: string,
+    leaseToken?: string,
+    privileged = false,
+  ): Promise<{ agent: RegisteredAgent; instance: AgentInstance }> {
+    const agent = await this.#requiredInstance(id, instanceId);
     if (!privileged) this.assertOwner(agent, leaseToken);
     const nowMs = this.#clock.now();
     const now = new Date(nowMs).toISOString();
@@ -187,39 +239,79 @@ export class RegistryService {
     agent.expiresAt = new Date(nowMs + agent.ttlSeconds * 1000).toISOString();
     agent.revision = this.nextRevision();
     await this.#store.renew(agent);
-    return publicAgent(agent);
+    const records = (await this.#store.list()).filter((candidate) => candidate.id === id);
+    return { agent: logicalAgent(records), instance: publicInstance(agent) };
   }
 
   async get(id: string): Promise<RegisteredAgent> {
-    return publicAgent(await this.#required(id));
+    const records = (await this.#store.list()).filter((agent) => agent.id === id);
+    if (records.length === 0) throw this.notFound(id);
+    return logicalAgent(records);
+  }
+
+  async getInstance(id: string, instanceId: string): Promise<AgentInstance> {
+    return publicInstance(await this.#requiredInstance(id, instanceId));
+  }
+
+  async listInstances(id: string): Promise<AgentInstance[]> {
+    const records = (await this.#store.list()).filter((agent) => agent.id === id)
+      .sort((left, right) => left.instanceId.localeCompare(right.instanceId));
+    if (records.length === 0) throw this.notFound(id);
+    return records.map(publicInstance);
   }
 
   async list(query: AgentQuery): Promise<AgentPage> {
-    const all = (await this.#store.list()).filter((agent) => matches(agent, query)).sort((a, b) => a.id.localeCompare(b.id));
+    const grouped = new Map<string, StoredAgent[]>();
+    for (const instance of await this.#store.list()) {
+      const records = grouped.get(instance.id) ?? [];
+      records.push(instance);
+      grouped.set(instance.id, records);
+    }
+    const all = [...grouped.values()].map(logicalAgent).filter((agent) => matches(agent, query))
+      .sort((a, b) => a.id.localeCompare(b.id));
     const startAfter = query.cursor ? decodeCursor(query.cursor) : undefined;
     const start = startAfter ? all.findIndex((agent) => agent.id > startAfter) : 0;
     const offset = start < 0 ? all.length : start;
     const selected = all.slice(offset, offset + query.limit);
     const hasMore = offset + selected.length < all.length;
     return {
-      agents: selected.map(publicAgent),
+      agents: selected,
       total: all.length,
       revision: Math.max(this.#revision, ...all.map((agent) => agent.revision)),
       ...(hasMore && selected.length > 0 ? { nextCursor: encodeCursor(selected[selected.length - 1]!.id) } : {}),
     };
   }
 
-  async unregister(id: string, leaseToken?: string, privileged = false): Promise<void> {
-    const agent = await this.#required(id);
+  async unregister(
+    id: string,
+    leaseToken?: string,
+    privileged = false,
+  ): Promise<void> {
+    await this.unregisterInstance(id, DEFAULT_INSTANCE_ID, leaseToken, privileged);
+  }
+
+  async unregisterInstance(
+    id: string,
+    instanceId: string,
+    leaseToken?: string,
+    privileged = false,
+  ): Promise<void> {
+    const agent = await this.#requiredInstance(id, instanceId);
     if (!privileged) this.assertOwner(agent, leaseToken);
     await this.#store.delete(agent);
     this.nextRevision();
   }
 
-  async #required(id: string): Promise<StoredAgent> {
-    const agent = await this.#store.get(id);
-    if (!agent) throw new RegistryError(404, "agent_not_found", `Agent '${id}' was not found or its lease expired`);
+  async #requiredInstance(id: string, instanceId: string): Promise<StoredAgent> {
+    const agent = await this.#store.get(id, instanceId);
+    if (!agent) {
+      throw new RegistryError(404, "agent_instance_not_found", `Instance '${instanceId}' of agent '${id}' was not found or its lease expired`);
+    }
     return agent;
+  }
+
+  private notFound(id: string): RegistryError {
+    return new RegistryError(404, "agent_not_found", `Agent '${id}' was not found or every instance lease expired`);
   }
 
   private assertOwner(agent: StoredAgent, leaseToken?: string): void {

@@ -4,7 +4,7 @@ import { createServer, type IncomingMessage, type Server, type ServerResponse } 
 import type { RegistryConfig } from "./config.js";
 import { isRegistryError, RegistryError } from "./errors.js";
 import { RegistryService } from "./service.js";
-import { parseAgentQuery, parseRegistration, validateId } from "./validation.js";
+import { parseAgentQuery, parseRegistration, validateId, validateInstanceId } from "./validation.js";
 
 const API_VERSION = "v1";
 
@@ -110,6 +110,34 @@ function pathId(pathname: string, suffix = ""): string | undefined {
   }
 }
 
+function instancePath(pathname: string, suffix = ""): { id: string; instanceId: string } | undefined {
+  const expression = suffix
+    ? new RegExp(`^/v1/agents/([^/]+)/instances/([^/]+)/${suffix}$`)
+    : /^\/v1\/agents\/([^/]+)\/instances\/([^/]+)$/;
+  const match = expression.exec(pathname);
+  if (!match?.[1] || !match[2]) return undefined;
+  try {
+    return {
+      id: validateId(decodeURIComponent(match[1])),
+      instanceId: validateInstanceId(decodeURIComponent(match[2])),
+    };
+  } catch (error) {
+    if (error instanceof URIError) throw new RegistryError(400, "invalid_request", "Agent or instance ID is not valid URL encoding");
+    throw error;
+  }
+}
+
+function instanceCollectionId(pathname: string): string | undefined {
+  const match = /^\/v1\/agents\/([^/]+)\/instances$/.exec(pathname);
+  if (!match?.[1]) return undefined;
+  try {
+    return validateId(decodeURIComponent(match[1]));
+  } catch (error) {
+    if (error instanceof URIError) throw new RegistryError(400, "invalid_request", "Agent ID is not valid URL encoding");
+    throw error;
+  }
+}
+
 function isListPath(pathname: string): boolean {
   return pathname === "/v1/agents" || pathname === "/v1/registry/agents" || pathname === "/v1/registry";
 }
@@ -181,8 +209,24 @@ export function createRegistryHttpServer(service: RegistryService, config: Regis
         json(res, result.created ? 201 : 200, {
           status: result.created ? "registered" : "updated",
           agent: result.agent,
+          instance: result.instance,
           ...(result.leaseToken ? { leaseToken: result.leaseToken } : {}),
-        }, { Location: `/v1/agents/${encodeURIComponent(result.agent.id)}`, "Cache-Control": "no-store" });
+        }, {
+          Location: result.instance.instanceId === "default"
+            ? `/v1/agents/${encodeURIComponent(result.agent.id)}`
+            : `/v1/agents/${encodeURIComponent(result.agent.id)}/instances/${encodeURIComponent(result.instance.instanceId)}`,
+          "Cache-Control": "no-store",
+        });
+        return;
+      }
+
+      const instanceHeartbeat = instancePath(url.pathname, "heartbeat");
+      if (req.method === "POST" && instanceHeartbeat) {
+        const result = await service.heartbeatInstance(
+          instanceHeartbeat.id, instanceHeartbeat.instanceId, leaseToken(req), privileged,
+        );
+        metrics.heartbeats += 1;
+        json(res, 200, { status: "heartbeat_acknowledged", ...result }, { "Cache-Control": "no-store" });
         return;
       }
 
@@ -219,6 +263,74 @@ export function createRegistryHttpServer(service: RegistryService, config: Regis
         return;
       }
 
+      const instancesId = instanceCollectionId(url.pathname);
+      if (req.method === "POST" && instancesId) {
+        if (config.writeToken && !privileged) {
+          throw new RegistryError(401, "write_auth_required", "A valid bearer token is required to register a new agent instance");
+        }
+        const raw = await readJson(req, config.maxBodyBytes);
+        if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
+          throw new RegistryError(400, "invalid_request", "Request body must be an object");
+        }
+        const input = parseRegistration({ ...raw, id: instancesId });
+        if (!input.instanceId) throw new RegistryError(400, "invalid_request", "instanceId is required");
+        const result = await service.register(input, leaseToken(req), privileged);
+        metrics.registrations += 1;
+        json(res, result.created ? 201 : 200, {
+          status: result.created ? "registered" : "updated",
+          agent: result.agent,
+          instance: result.instance,
+          ...(result.leaseToken ? { leaseToken: result.leaseToken } : {}),
+        }, {
+          Location: `/v1/agents/${encodeURIComponent(instancesId)}/instances/${encodeURIComponent(result.instance.instanceId)}`,
+          "Cache-Control": "no-store",
+        });
+        return;
+      }
+      if (req.method === "GET" && instancesId) {
+        const instances = await service.listInstances(instancesId);
+        json(res, 200, { instances, total: instances.length }, { "Cache-Control": "public, max-age=5, must-revalidate" });
+        return;
+      }
+
+      const instanceRoute = instancePath(url.pathname);
+      if (req.method === "GET" && instanceRoute) {
+        const instance = await service.getInstance(instanceRoute.id, instanceRoute.instanceId);
+        const etag = `W/\"agent-instance-${instanceRoute.id}-${instance.instanceId}-${instance.revision}\"`;
+        if (req.headers["if-none-match"] === etag) {
+          res.writeHead(304, { ETag: etag });
+          res.end();
+          return;
+        }
+        json(res, 200, { instance }, { ETag: etag, "Cache-Control": "public, max-age=5, must-revalidate" });
+        return;
+      }
+      if (req.method === "PUT" && instanceRoute) {
+        const raw = await readJson(req, config.maxBodyBytes);
+        if (!raw || typeof raw !== "object" || Array.isArray(raw)) {
+          throw new RegistryError(400, "invalid_request", "Request body must be an object");
+        }
+        const input = parseRegistration({ ...raw, id: instanceRoute.id, instanceId: instanceRoute.instanceId });
+        const result = await service.register(
+          input, leaseToken(req), privileged, config.writeToken === undefined || privileged,
+        );
+        metrics.registrations += 1;
+        json(res, result.created ? 201 : 200, {
+          status: result.created ? "registered" : "updated",
+          agent: result.agent,
+          instance: result.instance,
+          ...(result.leaseToken ? { leaseToken: result.leaseToken } : {}),
+        }, { Location: url.pathname, "Cache-Control": "no-store" });
+        return;
+      }
+      if (req.method === "DELETE" && instanceRoute) {
+        await service.unregisterInstance(instanceRoute.id, instanceRoute.instanceId, leaseToken(req), privileged);
+        metrics.unregistrations += 1;
+        res.writeHead(204);
+        res.end();
+        return;
+      }
+
       const id = pathId(url.pathname);
       if (req.method === "GET" && id) {
         const agent = await service.get(id);
@@ -241,6 +353,7 @@ export function createRegistryHttpServer(service: RegistryService, config: Regis
         json(res, result.created ? 201 : 200, {
           status: result.created ? "registered" : "updated",
           agent: result.agent,
+          instance: result.instance,
           ...(result.leaseToken ? { leaseToken: result.leaseToken } : {}),
         }, { Location: `/v1/agents/${encodeURIComponent(id)}`, "Cache-Control": "no-store" });
         return;
