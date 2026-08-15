@@ -1,5 +1,5 @@
 {
-  "name": "a2a-registry",
+  "name": "@a2a-labs/registry-server",
   "version": "0.2.0",
   "description": "A lease-based registry and discovery server for A2A agents",
   "type": "module",
@@ -52,5 +52,8 @@
     "@types/node": "^24.0.0",
     "tsx": "^4.20.3",
     "typescript": "^5.9.2"
+  },
+  "publishConfig": {
+    "access": "public"
   }
 }
