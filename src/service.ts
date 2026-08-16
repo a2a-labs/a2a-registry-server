@@ -1,4 +1,4 @@
-import { createHash, randomBytes, timingSafeEqual } from "node:crypto";
+import { createHash, randomBytes, randomUUID, timingSafeEqual } from "node:crypto";
 import { isDeepStrictEqual } from "node:util";
 import { RegistryError } from "./errors.js";
 import type {
@@ -167,7 +167,7 @@ export class RegistryService {
     privileged = false,
     creationAuthorized = true,
   ): Promise<RegisterResult> {
-    const instanceId = input.instanceId ?? DEFAULT_INSTANCE_ID;
+    const instanceId = input.instanceId ?? await this.#generateInstanceId(input.id);
     const existing = await this.#store.get(input.id, instanceId);
     if (!existing && !creationAuthorized) {
       throw new RegistryError(401, "write_auth_required", "A valid bearer token is required to register a new agent instance");
@@ -221,7 +221,8 @@ export class RegistryService {
     leaseToken?: string,
     privileged = false,
   ): Promise<RegisteredAgent> {
-    return (await this.heartbeatInstance(id, DEFAULT_INSTANCE_ID, leaseToken, privileged)).agent;
+    const instanceId = await this.#compatibilityInstanceId(id, leaseToken, privileged);
+    return (await this.heartbeatInstance(id, instanceId, leaseToken, privileged)).agent;
   }
 
   async heartbeatInstance(
@@ -287,7 +288,8 @@ export class RegistryService {
     leaseToken?: string,
     privileged = false,
   ): Promise<void> {
-    await this.unregisterInstance(id, DEFAULT_INSTANCE_ID, leaseToken, privileged);
+    const instanceId = await this.#compatibilityInstanceId(id, leaseToken, privileged);
+    await this.unregisterInstance(id, instanceId, leaseToken, privileged);
   }
 
   async unregisterInstance(
@@ -312,6 +314,48 @@ export class RegistryService {
 
   private notFound(id: string): RegistryError {
     return new RegistryError(404, "agent_not_found", `Agent '${id}' was not found or every instance lease expired`);
+  }
+
+  async #generateInstanceId(id: string): Promise<string> {
+    // UUID collisions are extraordinarily unlikely, but checking the store
+    // keeps the generated identifier unique even if a caller supplies a
+    // previously generated value through a custom store or test clock.
+    let instanceId: string;
+    do {
+      instanceId = randomUUID();
+    } while (await this.#store.get(id, instanceId));
+    return instanceId;
+  }
+
+  /**
+   * Resolve the old agent-level heartbeat/unregister routes. Explicitly named
+   * instances should use the instance routes; these compatibility routes can
+   * still target an existing `default` record, the lease-token owner, or the
+   * only active instance. Multiple generated instances are intentionally
+   * rejected without an instance ID to avoid acting on the wrong lease.
+   */
+  async #compatibilityInstanceId(
+    id: string,
+    leaseToken?: string,
+    privileged = false,
+  ): Promise<string> {
+    const records = (await this.#store.list())
+      .filter((agent) => agent.id === id)
+      .sort((left, right) => left.instanceId.localeCompare(right.instanceId));
+    if (records.length === 0) throw this.notFound(id);
+
+    if (leaseToken) {
+      const owned = records.find((record) => tokenMatches(leaseToken, record.leaseTokenHash));
+      if (owned) return owned.instanceId;
+      throw new RegistryError(401, "invalid_lease_token", "A valid X-Registry-Lease-Token is required for this agent");
+    }
+
+    const defaultRecord = records.find((record) => record.instanceId === DEFAULT_INSTANCE_ID);
+    if (defaultRecord) return defaultRecord.instanceId;
+
+    if (records.length === 1) return records[0]!.instanceId;
+    if (privileged) return records[0]!.instanceId;
+    throw new RegistryError(409, "instance_id_required", `Agent '${id}' has multiple active instances; specify instanceId`);
   }
 
   private assertOwner(agent: StoredAgent, leaseToken?: string): void {

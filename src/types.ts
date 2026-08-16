@@ -24,7 +24,7 @@ export interface RegisteredAgent {
   instanceCount: number;
 
   /**
-   * Compatibility projection of the default (or first) active instance.
+   * Compatibility projection of an explicitly named default (or first) active instance.
    * New clients should use `instances`.
    */
   endpoint: string;

@@ -3,7 +3,7 @@ import { readFile } from "node:fs/promises";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
 import type { RegistryConfig } from "./config.js";
 import { isRegistryError, RegistryError } from "./errors.js";
-import { RegistryService } from "./service.js";
+import { DEFAULT_INSTANCE_ID, RegistryService } from "./service.js";
 import { parseAgentQuery, parseRegistration, validateId, validateInstanceId } from "./validation.js";
 
 const API_VERSION = "v1";
@@ -146,6 +146,12 @@ function isRegisterPath(pathname: string): boolean {
   return pathname === "/v1/agents" || pathname === "/v1/registry/register" || pathname === "/v1/registry";
 }
 
+function instanceLocation(id: string, instanceId: string): string {
+  return instanceId === DEFAULT_INSTANCE_ID
+    ? `/v1/agents/${encodeURIComponent(id)}`
+    : `/v1/agents/${encodeURIComponent(id)}/instances/${encodeURIComponent(instanceId)}`;
+}
+
 export function createRegistryHttpServer(service: RegistryService, config: RegistryConfig): Server {
   const metrics = new Metrics();
   return createServer(async (req, res) => {
@@ -212,9 +218,7 @@ export function createRegistryHttpServer(service: RegistryService, config: Regis
           instance: result.instance,
           ...(result.leaseToken ? { leaseToken: result.leaseToken } : {}),
         }, {
-          Location: result.instance.instanceId === "default"
-            ? `/v1/agents/${encodeURIComponent(result.agent.id)}`
-            : `/v1/agents/${encodeURIComponent(result.agent.id)}/instances/${encodeURIComponent(result.instance.instanceId)}`,
+          Location: instanceLocation(result.agent.id, result.instance.instanceId),
           "Cache-Control": "no-store",
         });
         return;
@@ -355,7 +359,7 @@ export function createRegistryHttpServer(service: RegistryService, config: Regis
           agent: result.agent,
           instance: result.instance,
           ...(result.leaseToken ? { leaseToken: result.leaseToken } : {}),
-        }, { Location: `/v1/agents/${encodeURIComponent(id)}`, "Cache-Control": "no-store" });
+        }, { Location: instanceLocation(id, result.instance.instanceId), "Cache-Control": "no-store" });
         return;
       }
 

@@ -55,9 +55,15 @@ describe("registry HTTP API", () => {
       body: JSON.stringify({ id: "weather-1", agentCard: card, ttlSeconds: 30, metadata: { region: "eu-west" } }),
     });
     assert.equal(registration.status, 201);
-    const registered = await registration.json() as { leaseToken: string; agent: { endpoint: string } };
+    const registered = await registration.json() as {
+      leaseToken: string;
+      agent: { endpoint: string };
+      instance: { instanceId: string };
+    };
     assert.ok(registered.leaseToken);
     assert.equal(registered.agent.endpoint, "https://weather.example/a2a");
+    assert.notEqual(registered.instance.instanceId, "default");
+    assert.match(registered.instance.instanceId, /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/iu);
 
     const discovery = await fetch(`${baseUrl}/v1/agents?skill=forecast&capability=streaming&tag=weather`);
     assert.equal(discovery.status, 200);
@@ -248,5 +254,30 @@ describe("lease expiry", () => {
       () => service.register({ id: "blocked", endpoint: "https://example.test/a2a", agentCard: card }, undefined, false, false),
       (error: unknown) => error instanceof Error && error.message.includes("bearer token"),
     );
+  });
+});
+
+describe("instance identifiers", () => {
+  it("generates a unique instance ID for each registration that omits it", async () => {
+    const store = new MemoryRegistryStore();
+    const service = new RegistryService(store, { defaultTtlSeconds: 10, minTtlSeconds: 1, maxTtlSeconds: 60 });
+    await service.start();
+    const first = await service.register({ id: "generated", endpoint: "https://one.example/a2a", agentCard: card });
+    const second = await service.register({ id: "generated", endpoint: "https://two.example/a2a", agentCard: card });
+
+    try {
+      assert.notEqual(first.instance.instanceId, "default");
+      assert.notEqual(second.instance.instanceId, "default");
+      assert.notEqual(first.instance.instanceId, second.instance.instanceId);
+      assert.equal((await service.get("generated")).instanceCount, 2);
+      await service.unregister("generated", first.leaseToken);
+      assert.equal((await service.get("generated")).instanceCount, 1);
+      await service.unregister("generated", second.leaseToken);
+      await assert.rejects(() => service.get("generated"), /every instance lease expired/);
+    } finally {
+      await service.unregisterInstance("generated", first.instance.instanceId, first.leaseToken).catch(() => undefined);
+      await service.unregisterInstance("generated", second.instance.instanceId, second.leaseToken).catch(() => undefined);
+      await service.stop();
+    }
   });
 });

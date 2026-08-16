@@ -91,7 +91,7 @@ curl -i http://localhost:3003/v1/agents \
   }'
 ```
 
-The create response contains `leaseToken`. Save it securely: it is returned once and is required to update, renew, or remove the registration.
+The create response contains the server-assigned `instance.instanceId` and a `leaseToken`. Save the lease token securely: it is returned once and is required to update, renew, or remove the registration.
 
 ```bash
 export AGENT_LEASE_TOKEN='<value from registration response>'
@@ -105,7 +105,7 @@ curl -X DELETE http://localhost:3003/v1/agents/weather-eu-1 \
   -H "X-Registry-Lease-Token: $AGENT_LEASE_TOKEN"
 ```
 
-Send a heartbeat well before `ttlSeconds` elapses—normally every one-third of the TTL, with jitter and retry backoff. Registrations that omit `instanceId` use the compatibility instance named `default`, so existing clients continue to work.
+Send a heartbeat well before `ttlSeconds` elapses—normally every one-third of the TTL, with jitter and retry backoff. Registrations that omit `instanceId` receive a unique UUID from the server. The returned `instance.instanceId` can be used with the instance-specific routes; the legacy agent-level heartbeat and unregister routes continue to work for a sole instance or when the lease token identifies the instance.
 
 ## Multiple instances
 
@@ -139,7 +139,7 @@ Each response has a different `leaseToken`. Heartbeat an instance at `/v1/agents
 
 | Method | Path | Purpose |
 |---|---|---|
-| `POST` | `/v1/agents` | Register an instance (`default` when `instanceId` is omitted) |
+| `POST` | `/v1/agents` | Register an instance (server-generated UUID when `instanceId` is omitted) |
 | `GET` | `/v1/agents` | Discover logical agents and active instances |
 | `GET` | `/v1/agents/{id}` | Fetch one logical agent and its active instances |
 | `POST` | `/v1/agents/{id}/instances` | Register a named instance |
@@ -148,14 +148,15 @@ Each response has a different `leaseToken`. Heartbeat an instance at `/v1/agents
 | `GET` | `/v1/agents/{id}/instances/{instanceId}` | Fetch a named instance |
 | `POST` | `/v1/agents/{id}/instances/{instanceId}/heartbeat` | Renew a named instance lease |
 | `DELETE` | `/v1/agents/{id}/instances/{instanceId}` | Unregister a named instance |
-| `PUT`, `DELETE` | `/v1/agents/{id}` | Create/replace or remove the `default` instance |
-| `POST` | `/v1/agents/{id}/heartbeat` | Renew the `default` instance lease |
+| `PUT` | `/v1/agents/{id}` | Register an instance, generating its ID when omitted |
+| `DELETE` | `/v1/agents/{id}` | Remove the compatibility instance, or the lease-token-owned sole instance |
+| `POST` | `/v1/agents/{id}/heartbeat` | Renew the compatibility instance, or the lease-token-owned sole instance |
 | `GET` | `/health/live` | Process liveness |
 | `GET` | `/health/ready` | Storage readiness |
 | `GET` | `/metrics` | Prometheus text metrics |
 | `GET` | `/openapi.yaml` | OpenAPI 3.1 document |
 
-Discovery accepts `skill`, `tag`, `capability`, `protocolBinding`, `name`, `limit`, and `cursor`. Pagination and `total` count logical agents, and only logical agents with at least one unexpired instance are returned. The top-level instance fields (`endpoint`, TTL, timestamps, and metadata) remain as a compatibility projection of the `default` or first active instance; new clients should use `instances`.
+Discovery accepts `skill`, `tag`, `capability`, `protocolBinding`, `name`, `limit`, and `cursor`. Pagination and `total` count logical agents, and only logical agents with at least one unexpired instance are returned. The top-level instance fields (`endpoint`, TTL, timestamps, and metadata) remain as a compatibility projection of the first active instance, preferring an explicitly named `default` instance; new clients should use `instances`.
 
 PoC-compatible aliases remain available at `/v1/registry`, `/v1/registry/register`, `/v1/registry/agents`, and `/v1/registry/heartbeat`. They use the new ownership rules.
 
