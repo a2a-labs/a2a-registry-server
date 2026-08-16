@@ -13,19 +13,28 @@ import type {
   StoredAgent,
 } from "./types.js";
 
+/** Default wall-clock implementation using Date.now(). */
 const systemClock: Clock = { now: () => Date.now() };
+
+/** Default instance identifier used when an explicit instanceId is not specified. */
 export const DEFAULT_INSTANCE_ID = "default";
 
+/** Generate a SHA-256 hash string for a secret lease token. */
 function hashToken(token: string): string {
   return createHash("sha256").update(token).digest("hex");
 }
 
+/**
+ * Compare a candidate lease token against a stored SHA-256 token hash using constant-time comparison
+ * to prevent timing side-channel attacks.
+ */
 function tokenMatches(token: string, expectedHash: string): boolean {
   const actual = Buffer.from(hashToken(token), "hex");
   const expected = Buffer.from(expectedHash, "hex");
   return actual.length === expected.length && timingSafeEqual(actual, expected);
 }
 
+/** Strip internal storage fields (lease token hashes, backend IDs) to return a public AgentInstance object. */
 function publicInstance(agent: StoredAgent): AgentInstance {
   const {
     id: _, name: __, agentCard: ___, leaseTokenHash: ____, backendLeaseId: _____,
@@ -34,6 +43,10 @@ function publicInstance(agent: StoredAgent): AgentInstance {
   return result;
 }
 
+/**
+ * Aggregate multiple stored instance records sharing the same logical agent ID into a unified
+ * public `RegisteredAgent` representation with instance list and aggregated status fields.
+ */
 function logicalAgent(records: StoredAgent[]): RegisteredAgent {
   if (records.length === 0) throw new Error("Cannot build a logical agent without an active instance");
   const sorted = [...records].sort((left, right) => left.instanceId.localeCompare(right.instanceId));
@@ -56,10 +69,15 @@ function logicalAgent(records: StoredAgent[]): RegisteredAgent {
   };
 }
 
+/** Helper function to convert unknown values to lowercase string. */
 function lower(value: unknown): string {
   return typeof value === "string" ? value.toLowerCase() : "";
 }
 
+/**
+ * Test whether a logical agent matches the filter criteria specified in an AgentQuery object.
+ * Checks name substring, skill IDs/names/tags, capability flags, and protocol bindings.
+ */
 function matches(agent: RegisteredAgent, query: AgentQuery): boolean {
   const card = agent.agentCard as unknown as JsonObject;
   if (query.name && !agent.name.toLowerCase().includes(query.name.toLowerCase())) return false;
@@ -104,10 +122,12 @@ function matches(agent: RegisteredAgent, query: AgentQuery): boolean {
   return true;
 }
 
+/** Encode an agent ID into a URL-safe base64 string for use as a pagination cursor. */
 function encodeCursor(id: string): string {
   return Buffer.from(id, "utf8").toString("base64url");
 }
 
+/** Decode a base64url pagination cursor string back into an agent ID. */
 function decodeCursor(cursor: string): string {
   try {
     return Buffer.from(cursor, "base64url").toString("utf8");
@@ -116,13 +136,22 @@ function decodeCursor(cursor: string): string {
   }
 }
 
+/** Return result structure from an agent registration operation. */
 export interface RegisterResult {
+  /** Aggregated logical agent state after registration. */
   agent: RegisteredAgent;
+  /** Public representation of the registered instance. */
   instance: AgentInstance;
+  /** Flag indicating whether a new instance record was created. */
   created: boolean;
+  /** Secret lease token returned only upon initial creation of a new instance. */
   leaseToken?: string;
 }
 
+/**
+ * Core business service for managing agent registrations, heartbeats, discovery queries,
+ * and instance lifecycles across backing store implementations.
+ */
 export class RegistryService {
   readonly #store: RegistryStore;
   readonly #clock: Clock;
@@ -131,6 +160,11 @@ export class RegistryService {
   readonly #maxTtl: number;
   #revision: number;
 
+  /**
+   * Create a new RegistryService instance.
+   * @param store - Backend storage adapter (e.g. MemoryRegistryStore or EtcdRegistryStore).
+   * @param options - Configuration options for default/min/max TTL settings and optional clock.
+   */
   constructor(store: RegistryStore, options: {
     defaultTtlSeconds: number;
     minTtlSeconds: number;
@@ -145,22 +179,31 @@ export class RegistryService {
     this.#revision = this.#clock.now();
   }
 
+  /** Return the name of the underlying storage backend. */
   get storeName(): string {
     return this.#store.name;
   }
 
+  /** Start the service and underlying store. */
   async start(): Promise<void> {
     await this.#store.start();
   }
 
+  /** Stop the service and clean up store resources. */
   async stop(): Promise<void> {
     await this.#store.stop();
   }
 
+  /** Check if the underlying store is healthy and operational. */
   async ready(): Promise<boolean> {
     return this.#store.ready();
   }
 
+  /**
+   * Register or update an agent instance lease.
+   * Validates bearer write tokens for creation, checks lease token ownership for updates,
+   * enforces identical Agent Cards across all active instances of an agent ID, and saves the record.
+   */
   async register(
     input: RegistrationInput,
     leaseToken?: string,
@@ -216,6 +259,7 @@ export class RegistryService {
     };
   }
 
+  /** Renew an agent lease targeting a default or inferred instance ID (compatibility route). */
   async heartbeat(
     id: string,
     leaseToken?: string,
@@ -225,6 +269,7 @@ export class RegistryService {
     return (await this.heartbeatInstance(id, instanceId, leaseToken, privileged)).agent;
   }
 
+  /** Renew an agent instance lease by resetting its TTL timer. */
   async heartbeatInstance(
     id: string,
     instanceId: string,
@@ -244,16 +289,19 @@ export class RegistryService {
     return { agent: logicalAgent(records), instance: publicInstance(agent) };
   }
 
+  /** Retrieve an aggregated logical agent by ID. Throws 404 if not found or expired. */
   async get(id: string): Promise<RegisteredAgent> {
     const records = (await this.#store.list()).filter((agent) => agent.id === id);
     if (records.length === 0) throw this.notFound(id);
     return logicalAgent(records);
   }
 
+  /** Retrieve a specific agent instance by agent ID and instance ID. */
   async getInstance(id: string, instanceId: string): Promise<AgentInstance> {
     return publicInstance(await this.#requiredInstance(id, instanceId));
   }
 
+  /** List all active public instances for a given logical agent ID. */
   async listInstances(id: string): Promise<AgentInstance[]> {
     const records = (await this.#store.list()).filter((agent) => agent.id === id)
       .sort((left, right) => left.instanceId.localeCompare(right.instanceId));
@@ -261,6 +309,7 @@ export class RegistryService {
     return records.map(publicInstance);
   }
 
+  /** Query and filter registered agents with pagination support. */
   async list(query: AgentQuery): Promise<AgentPage> {
     const grouped = new Map<string, StoredAgent[]>();
     for (const instance of await this.#store.list()) {
@@ -283,6 +332,7 @@ export class RegistryService {
     };
   }
 
+  /** Unregister an agent using compatibility route resolution for default/inferred instance. */
   async unregister(
     id: string,
     leaseToken?: string,
@@ -292,6 +342,7 @@ export class RegistryService {
     await this.unregisterInstance(id, instanceId, leaseToken, privileged);
   }
 
+  /** Unregister and remove a specific agent instance lease from the store. */
   async unregisterInstance(
     id: string,
     instanceId: string,
@@ -304,6 +355,7 @@ export class RegistryService {
     this.nextRevision();
   }
 
+  /** Internal helper to fetch a required stored instance or throw a 404 RegistryError. */
   async #requiredInstance(id: string, instanceId: string): Promise<StoredAgent> {
     const agent = await this.#store.get(id, instanceId);
     if (!agent) {
@@ -312,10 +364,12 @@ export class RegistryService {
     return agent;
   }
 
+  /** Construct a 404 agent_not_found RegistryError. */
   private notFound(id: string): RegistryError {
     return new RegistryError(404, "agent_not_found", `Agent '${id}' was not found or every instance lease expired`);
   }
 
+  /** Generate a unique UUID for a new instance, verifying non-collision with the store. */
   async #generateInstanceId(id: string): Promise<string> {
     // UUID collisions are extraordinarily unlikely, but checking the store
     // keeps the generated identifier unique even if a caller supplies a
@@ -358,14 +412,17 @@ export class RegistryService {
     throw new RegistryError(409, "instance_id_required", `Agent '${id}' has multiple active instances; specify instanceId`);
   }
 
+  /** Verify that the supplied leaseToken matches the stored agent's leaseTokenHash. */
   private assertOwner(agent: StoredAgent, leaseToken?: string): void {
     if (!leaseToken || !tokenMatches(leaseToken, agent.leaseTokenHash)) {
       throw new RegistryError(401, "invalid_lease_token", "A valid X-Registry-Lease-Token is required for this agent");
     }
   }
 
+  /** Increment and return the monotonically increasing revision counter. */
   private nextRevision(): number {
     this.#revision += 1;
     return this.#revision;
   }
 }
+

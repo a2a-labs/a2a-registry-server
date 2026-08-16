@@ -1,3 +1,10 @@
+/**
+ * @fileoverview Main entry point for the A2A Registry Server package.
+ * Exports public API modules including configuration loaders, CLI entry points,
+ * error classes, HTTP server creators, service layer implementations, storage backends,
+ * and core TypeScript types.
+ */
+
 export { loadConfig, type RegistryConfig, type RegistryConfigOverrides } from "./config.js";
 export {
   CLI_VERSION,
@@ -23,3 +30,4 @@ export type {
   RegistryStore,
   StoredAgent,
 } from "./types.js";
+

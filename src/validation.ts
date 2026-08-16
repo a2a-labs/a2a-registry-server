@@ -2,8 +2,10 @@ import type { AgentCard } from "@a2a-js/sdk";
 import { RegistryError } from "./errors.js";
 import type { AgentQuery, JsonObject, RegistrationInput } from "./types.js";
 
+/** Regex pattern for valid identifier strings (alphanumeric, dot, underscore, colon, hyphen). */
 const ID_PATTERN = /^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,127}$/;
 
+/** Ensure value is a non-null, non-array object. */
 function object(value: unknown, field: string): JsonObject {
   if (value === null || typeof value !== "object" || Array.isArray(value)) {
     throw new RegistryError(400, "invalid_request", `${field} must be a JSON object`);
@@ -11,6 +13,7 @@ function object(value: unknown, field: string): JsonObject {
   return value as JsonObject;
 }
 
+/** Ensure value is a non-empty trimmed string within maximum character length limit. */
 function nonEmptyString(value: unknown, field: string, maximum = 2048): string {
   if (typeof value !== "string" || value.trim().length === 0 || value.length > maximum) {
     throw new RegistryError(400, "invalid_request", `${field} must be a non-empty string no longer than ${maximum} characters`);
@@ -18,6 +21,7 @@ function nonEmptyString(value: unknown, field: string, maximum = 2048): string {
   return value.trim();
 }
 
+/** Validate identifier strings against ID_PATTERN. */
 function validateIdentifier(value: unknown, field: string): string {
   const id = nonEmptyString(value, field, 128);
   if (!ID_PATTERN.test(id)) {
@@ -26,14 +30,17 @@ function validateIdentifier(value: unknown, field: string): string {
   return id;
 }
 
+/** Validate logical agent ID format. */
 export function validateId(value: unknown): string {
   return validateIdentifier(value, "id");
 }
 
+/** Validate agent instance ID format. */
 export function validateInstanceId(value: unknown): string {
   return validateIdentifier(value, "instanceId");
 }
 
+/** Validate endpoint string as a valid http or https URL. */
 function validateEndpoint(value: unknown, field: string): string {
   const endpoint = nonEmptyString(value, field, 2048);
   let url: URL;
@@ -48,6 +55,10 @@ function validateEndpoint(value: unknown, field: string): string {
   return url.toString();
 }
 
+/**
+ * Infer the primary HTTP endpoint URL from an Agent Card.
+ * Prefers `supportedInterfaces[].url` if available, falling back to legacy top-level `url`.
+ */
 export function inferEndpoint(agentCard: JsonObject): string | undefined {
   if (Array.isArray(agentCard.supportedInterfaces)) {
     for (const entry of agentCard.supportedInterfaces) {
@@ -59,6 +70,10 @@ export function inferEndpoint(agentCard: JsonObject): string | undefined {
   return typeof agentCard.url === "string" ? agentCard.url : undefined;
 }
 
+/**
+ * Validate an A2A Agent Card object payload.
+ * Checks essential fields while retaining unknown fields for forward compatibility.
+ */
 export function validateAgentCard(value: unknown): AgentCard {
   const card = object(value, "agentCard");
   nonEmptyString(card.name, "agentCard.name", 256);
@@ -78,6 +93,7 @@ export function validateAgentCard(value: unknown): AgentCard {
   return card as unknown as AgentCard;
 }
 
+/** Validate key-value metadata object constraints (at most 32 entries). */
 function validateMetadata(value: unknown): Record<string, string> | undefined {
   if (value === undefined) return undefined;
   const input = object(value, "metadata");
@@ -95,6 +111,7 @@ function validateMetadata(value: unknown): Record<string, string> | undefined {
   return result;
 }
 
+/** Parse and validate request body payload into a RegistrationInput structure. */
 export function parseRegistration(value: unknown): RegistrationInput {
   const input = object(value, "request body");
   const agentCard = validateAgentCard(input.agentCard);
@@ -124,6 +141,7 @@ export function parseRegistration(value: unknown): RegistrationInput {
   };
 }
 
+/** Extract an optional string query parameter from URL search params. */
 function optionalQuery(url: URL, name: string, maximum = 256): string | undefined {
   const value = url.searchParams.get(name)?.trim();
   if (!value) return undefined;
@@ -131,6 +149,7 @@ function optionalQuery(url: URL, name: string, maximum = 256): string | undefine
   return value;
 }
 
+/** Parse URL search query parameters into an AgentQuery filter object. */
 export function parseAgentQuery(url: URL): AgentQuery {
   const rawLimit = url.searchParams.get("limit") ?? "100";
   const limit = Number(rawLimit);
@@ -147,3 +166,4 @@ export function parseAgentQuery(url: URL): AgentQuery {
     ...(optionalQuery(url, "cursor", 1024) ? { cursor: optionalQuery(url, "cursor", 1024) } : {}),
   };
 }
+

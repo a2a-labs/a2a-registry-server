@@ -14,8 +14,11 @@ import type { Server } from "node:http";
 
 const require = createRequire(import.meta.url);
 const packageMetadata = require("../package.json") as { version?: unknown };
+
+/** Package version string extracted from package.json. */
 export const CLI_VERSION = typeof packageMetadata.version === "string" ? packageMetadata.version : "0.0.0";
 
+/** Custom Error thrown when CLI arguments or env file parsing fail. */
 export class CliUsageError extends Error {
   constructor(message: string) {
     super(message);
@@ -23,13 +26,19 @@ export class CliUsageError extends Error {
   }
 }
 
+/** Options parsed from command-line arguments. */
 export interface CliOptions {
+  /** Flag indicating if help message was requested. */
   help: boolean;
+  /** Flag indicating if version string was requested. */
   version: boolean;
+  /** Optional path to a dotenv environment file. */
   envFile?: string;
+  /** Explicit configuration overrides from CLI flags. */
   overrides: RegistryConfigOverrides;
 }
 
+/** Usage help documentation string. */
 const HELP = `A2A Registry Server ${CLI_VERSION}
 
 Usage:
@@ -60,6 +69,7 @@ Environment variables are read first; command-line options override them. The
 server handles SIGINT and SIGTERM and waits for active HTTP requests to close.
 `;
 
+/** Helper to extract string value for a command-line flag. */
 function optionValue(args: string[], index: number, option: string, inline: string | undefined): { value: string; index: number } {
   const value = inline ?? args[index + 1];
   if (value === undefined || value.trim() === "") {
@@ -68,6 +78,7 @@ function optionValue(args: string[], index: number, option: string, inline: stri
   return { value, index: inline === undefined ? index + 1 : index };
 }
 
+/** Helper to parse and validate integer option from CLI flags. */
 function integerOption(option: string, raw: string): number {
   const value = Number(raw);
   if (!Number.isSafeInteger(value)) throw new CliUsageError(`${option} must be a safe integer`);
@@ -199,13 +210,19 @@ export async function loadEnvironmentFile(path: string): Promise<void> {
   }
 }
 
+/** Active server runtime handle returned by `startRegistryServer`. */
 export interface RegistryRuntime {
+  /** Resolved configuration used by the running instance. */
   readonly config: RegistryConfig;
+  /** Active RegistryService instance. */
   readonly service: RegistryService;
+  /** Active HTTP server instance. */
   readonly server: Server;
+  /** Gracefully stop the HTTP server and storage backend. */
   close(): Promise<void>;
 }
 
+/** Helper to bind and start listening on HTTP server port/host. */
 function listen(server: Server, config: RegistryConfig): Promise<void> {
   return new Promise((resolveListen, rejectListen) => {
     const onError = (error: Error): void => {
@@ -222,6 +239,7 @@ function listen(server: Server, config: RegistryConfig): Promise<void> {
   });
 }
 
+/** Helper to gracefully close the HTTP server instance. */
 function closeHttpServer(server: Server): Promise<void> {
   if (!server.listening) return Promise.resolve();
   return new Promise((resolveClose, rejectClose) => {
@@ -265,6 +283,7 @@ export async function startRegistryServer(config: RegistryConfig = loadConfig())
   };
 }
 
+/** Helper to resolve bound address string for logging. */
 function boundAddress(server: Server, config: RegistryConfig): string {
   const address = server.address();
   if (!address || typeof address === "string") return config.publicUrl;
@@ -279,11 +298,13 @@ function boundAddress(server: Server, config: RegistryConfig): string {
   return parsed.toString().replace(/\/$/u, "");
 }
 
+/** Helper to log errors formatted as JSON to stderr. */
 function printError(error: unknown): void {
   const message = error instanceof Error ? error.message : String(error);
   console.error(JSON.stringify({ level: "error", message }));
 }
 
+/** Main CLI process entry point executing configuration, startup, signal listeners, and graceful shutdown. */
 export async function main(argv: readonly string[] = process.argv.slice(2)): Promise<number> {
   let options: CliOptions;
   try {
@@ -361,3 +382,4 @@ if (entry && resolve(entry) === fileURLToPath(import.meta.url)) {
     process.exitCode = 1;
   });
 }
+

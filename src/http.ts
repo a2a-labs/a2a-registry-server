@@ -6,13 +6,18 @@ import { isRegistryError, RegistryError } from "./errors.js";
 import { DEFAULT_INSTANCE_ID, RegistryService } from "./service.js";
 import { parseAgentQuery, parseRegistration, validateId, validateInstanceId } from "./validation.js";
 
+/** Current API version string prefix ("v1"). */
 const API_VERSION = "v1";
 
+/** Context object for tracking request metadata across lifecycle handlers. */
 interface RequestContext {
+  /** Unique request correlation ID. */
   requestId: string;
+  /** Timestamp when request handling started (ms). */
   startedAt: number;
 }
 
+/** In-memory Prometheus metrics counter tracker. */
 class Metrics {
   requests = 0;
   errors = 0;
@@ -20,6 +25,7 @@ class Metrics {
   heartbeats = 0;
   unregistrations = 0;
 
+  /** Render metrics in Prometheus text format (version 0.0.4). */
   render(storeName: string): string {
     return [
       "# HELP a2a_registry_http_requests_total Total HTTP requests.",
@@ -43,12 +49,14 @@ class Metrics {
   }
 }
 
+/** Perform constant-time string comparison for secret credentials. */
 function constantEquals(actual: string, expected: string): boolean {
   const left = Buffer.from(actual);
   const right = Buffer.from(expected);
   return left.length === right.length && timingSafeEqual(left, right);
 }
 
+/** Read and parse JSON request body with maximum byte payload check. */
 async function readJson(req: IncomingMessage, maximumBytes: number): Promise<unknown> {
   const chunks: Buffer[] = [];
   let bytes = 0;
@@ -66,6 +74,7 @@ async function readJson(req: IncomingMessage, maximumBytes: number): Promise<unk
   }
 }
 
+/** Set standard response headers including CORS, security parameters, and request ID. */
 function setCommonHeaders(res: ServerResponse, config: RegistryConfig, requestId: string): void {
   res.setHeader("Access-Control-Allow-Origin", config.corsOrigin);
   res.setHeader("Access-Control-Allow-Methods", "GET, POST, PUT, DELETE, OPTIONS");
@@ -75,6 +84,7 @@ function setCommonHeaders(res: ServerResponse, config: RegistryConfig, requestId
   res.setHeader("X-Request-Id", requestId);
 }
 
+/** Send a JSON HTTP response payload. */
 function json(res: ServerResponse, status: number, payload: unknown, headers: Record<string, string> = {}): void {
   const body = JSON.stringify(payload);
   res.writeHead(status, {
@@ -85,17 +95,20 @@ function json(res: ServerResponse, status: number, payload: unknown, headers: Re
   res.end(body);
 }
 
+/** Extract Bearer token string from HTTP Authorization header. */
 function bearer(req: IncomingMessage): string | undefined {
   const header = req.headers.authorization;
   if (!header?.startsWith("Bearer ")) return undefined;
   return header.slice("Bearer ".length);
 }
 
+/** Extract lease token string from X-Registry-Lease-Token header. */
 function leaseToken(req: IncomingMessage): string | undefined {
   const value = req.headers["x-registry-lease-token"];
   return Array.isArray(value) ? value[0] : value;
 }
 
+/** Extract and decode agent ID from single-agent route paths (e.g. `/v1/agents/:id`). */
 function pathId(pathname: string, suffix = ""): string | undefined {
   const expression = suffix
     ? new RegExp(`^/v1/(?:registry/)?agents/([^/]+)/${suffix}$`)
@@ -110,6 +123,7 @@ function pathId(pathname: string, suffix = ""): string | undefined {
   }
 }
 
+/** Extract agent ID and instance ID from instance route paths (e.g. `/v1/agents/:id/instances/:instanceId`). */
 function instancePath(pathname: string, suffix = ""): { id: string; instanceId: string } | undefined {
   const expression = suffix
     ? new RegExp(`^/v1/agents/([^/]+)/instances/([^/]+)/${suffix}$`)
@@ -127,6 +141,7 @@ function instancePath(pathname: string, suffix = ""): { id: string; instanceId: 
   }
 }
 
+/** Extract agent ID from instance collection route path (`/v1/agents/:id/instances`). */
 function instanceCollectionId(pathname: string): string | undefined {
   const match = /^\/v1\/agents\/([^/]+)\/instances$/.exec(pathname);
   if (!match?.[1]) return undefined;
@@ -138,20 +153,32 @@ function instanceCollectionId(pathname: string): string | undefined {
   }
 }
 
+/** Check if pathname matches an agent list/discovery route. */
 function isListPath(pathname: string): boolean {
   return pathname === "/v1/agents" || pathname === "/v1/registry/agents" || pathname === "/v1/registry";
 }
 
+/** Check if pathname matches an agent registration route. */
 function isRegisterPath(pathname: string): boolean {
   return pathname === "/v1/agents" || pathname === "/v1/registry/register" || pathname === "/v1/registry";
 }
 
+/** Construct relative instance location URL path for HTTP Location headers. */
 function instanceLocation(id: string, instanceId: string): string {
   return instanceId === DEFAULT_INSTANCE_ID
     ? `/v1/agents/${encodeURIComponent(id)}`
     : `/v1/agents/${encodeURIComponent(id)}/instances/${encodeURIComponent(instanceId)}`;
 }
 
+/**
+ * Factory function creating a Node.js HTTP server instance wired to the RegistryService
+ * and RegistryConfig. Handles route dispatch, authentication, OpenAPI specs, health checks,
+ * metrics, and RFC 7807 error formatting.
+ *
+ * @param service - Configured RegistryService instance.
+ * @param config - Resolved RegistryConfig instance.
+ * @returns Node.js `http.Server` ready to listen.
+ */
 export function createRegistryHttpServer(service: RegistryService, config: RegistryConfig): Server {
   const metrics = new Metrics();
   return createServer(async (req, res) => {
