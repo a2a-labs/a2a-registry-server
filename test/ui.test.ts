@@ -20,6 +20,7 @@ async function start(ui: boolean, uiDir: string): Promise<RegistryRuntime> {
     defaultTtlSeconds: 5,
     maxTtlSeconds: 10,
     pruneIntervalMs: 100,
+    logLevel: "silent",
     ui,
     uiDir,
   }));

@@ -26,6 +26,7 @@ describe("registry HTTP API", () => {
     port: 0,
     publicUrl: "http://127.0.0.1",
     store: "memory",
+    logLevel: "silent",
     defaultTtlSeconds: 60,
     minTtlSeconds: 1,
     maxTtlSeconds: 3600,

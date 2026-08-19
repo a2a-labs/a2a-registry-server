@@ -51,7 +51,8 @@
     "url": "git+https://github.com/a2a-labs/a2a-registry-server.git"
   },
   "dependencies": {
-    "@a2a-js/sdk": "^1.0.1"
+    "@a2a-js/sdk": "^1.0.1",
+    "pino": "^10.3.1"
   },
   "devDependencies": {
     "@types/node": "^24.0.0",

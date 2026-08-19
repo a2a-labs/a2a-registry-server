@@ -8,6 +8,7 @@ import { resolve } from "node:path";
 import { createRegistryHttpServer } from "./http.js";
 import { loadConfig, type RegistryConfig, type RegistryConfigOverrides } from "./config.js";
 import { RegistryError } from "./errors.js";
+import { createLogger, isLogLevel, LOG_LEVELS, type Logger } from "./logger.js";
 import { RegistryService } from "./service.js";
 import { EtcdRegistryStore } from "./store/etcd.js";
 import { MemoryRegistryStore } from "./store/memory.js";
@@ -53,6 +54,7 @@ Options:
   -p, --port <number>              Listen port, 0 chooses a free port (REGISTRY_PORT)
       --public-url <url>           Public base URL (REGISTRY_PUBLIC_URL)
       --store <memory|etcd>        Storage backend (REGISTRY_STORE)
+      --log-level <level>          Log level: fatal, error, warn, info, debug, trace, silent
       --default-ttl-seconds <n>    Default registration lease TTL
       --min-ttl-seconds <n>        Minimum registration lease TTL
       --max-ttl-seconds <n>        Maximum registration lease TTL
@@ -141,6 +143,12 @@ export function parseCliArgs(args: readonly string[]): CliOptions {
         overrides.store = value;
         break;
       }
+      case "--log-level": {
+        const value = read(name);
+        if (!isLogLevel(value)) throw new CliUsageError(`${name} must be one of: ${LOG_LEVELS.join(", ")}`);
+        overrides.logLevel = value;
+        break;
+      }
       case "--default-ttl":
       case "--default-ttl-seconds":
         overrides.defaultTtlSeconds = readInteger(name);
@@ -168,9 +176,6 @@ export function parseCliArgs(args: readonly string[]): CliOptions {
       case "--ui":
         if (inline !== undefined) throw new CliUsageError(`${name} does not accept a value`);
         overrides.ui = true;
-        break;
-      case "--ui-dir":
-        overrides.uiDir = read(name);
         break;
       case "--etcd-endpoint":
         overrides.etcd = { ...overrides.etcd, endpoint: read(name) };
@@ -228,6 +233,8 @@ export interface RegistryRuntime {
   readonly service: RegistryService;
   /** Active HTTP server instance. */
   readonly server: Server;
+  /** Structured logger used by this runtime. */
+  readonly logger: Logger;
   /** Gracefully stop the HTTP server and storage backend. */
   close(): Promise<void>;
 }
@@ -261,7 +268,10 @@ function closeHttpServer(server: Server): Promise<void> {
 }
 
 /** Start a registry instance and return a testable runtime handle. */
-export async function startRegistryServer(config: RegistryConfig = loadConfig()): Promise<RegistryRuntime> {
+export async function startRegistryServer(
+  config: RegistryConfig = loadConfig(),
+  logger: Logger = createLogger(config.logLevel),
+): Promise<RegistryRuntime> {
   const store = config.store === "etcd"
     ? new EtcdRegistryStore(config.etcd)
     : new MemoryRegistryStore(config.pruneIntervalMs);
@@ -271,7 +281,7 @@ export async function startRegistryServer(config: RegistryConfig = loadConfig())
     maxTtlSeconds: config.maxTtlSeconds,
   });
   await service.start();
-  const server = createRegistryHttpServer(service, config);
+  const server = createRegistryHttpServer(service, config, logger);
   try {
     await listen(server, config);
   } catch (error) {
@@ -284,6 +294,7 @@ export async function startRegistryServer(config: RegistryConfig = loadConfig())
     config,
     service,
     server,
+    logger,
     async close(): Promise<void> {
       if (closed) return;
       closed = true;
@@ -308,19 +319,27 @@ function boundAddress(server: Server, config: RegistryConfig): string {
   return parsed.toString().replace(/\/$/u, "");
 }
 
-/** Helper to log errors formatted as JSON to stderr. */
-function printError(error: unknown): void {
-  const message = error instanceof Error ? error.message : String(error);
-  console.error(JSON.stringify({ level: "error", message }));
+/** Helper to log errors through the structured logger. */
+function printError(logger: Logger, error: unknown): void {
+  if (error instanceof CliUsageError) {
+    logger.error({ event: "process.error", errorType: error.name }, error.message);
+  } else if (error instanceof RegistryError) {
+    logger.error({ event: "process.error", errorType: error.name, errorCode: error.code }, error.message);
+  } else if (error instanceof Error) {
+    logger.error({ event: "process.error", err: error }, error.message);
+  } else {
+    logger.error({ event: "process.error", error }, String(error));
+  }
 }
 
 /** Main CLI process entry point executing configuration, startup, signal listeners, and graceful shutdown. */
 export async function main(argv: readonly string[] = process.argv.slice(2)): Promise<number> {
+  let logger = createLogger();
   let options: CliOptions;
   try {
     options = parseCliArgs(argv);
   } catch (error) {
-    printError(error);
+    printError(logger, error);
     console.error("Run 'a2a-registry --help' for usage.");
     return 2;
   }
@@ -337,23 +356,23 @@ export async function main(argv: readonly string[] = process.argv.slice(2)): Pro
   try {
     if (options.envFile) await loadEnvironmentFile(options.envFile);
     const config = loadConfig(process.env, options.overrides);
-    const runtime = await startRegistryServer(config);
-    console.log(JSON.stringify({
-      level: "info",
-      message: "A2A Registry Server started",
+    logger = createLogger(config.logLevel);
+    const runtime = await startRegistryServer(config, logger);
+    logger.info({
+      event: "server.started",
       address: boundAddress(runtime.server, config),
       publicUrl: config.publicUrl,
       store: runtime.service.storeName,
       ready: await runtime.service.ready(),
-    }));
+    }, "A2A Registry Server started");
 
     let stopping = false;
     const shutdown = async (signal: string): Promise<void> => {
       if (stopping) return;
       stopping = true;
-      console.log(JSON.stringify({ level: "info", message: "Shutting down", signal }));
+      logger.info({ event: "server.stopping", signal }, "Shutting down");
       const timeout = setTimeout(() => {
-        console.error(JSON.stringify({ level: "error", message: "Forced shutdown after timeout" }));
+        logger.fatal({ event: "server.shutdown_timeout" }, "Forced shutdown after timeout");
         process.exit(1);
       }, 10_000);
       timeout.unref();
@@ -361,7 +380,7 @@ export async function main(argv: readonly string[] = process.argv.slice(2)): Pro
         await runtime.close();
         process.exitCode = 0;
       } catch (error) {
-        printError(error);
+        printError(logger, error);
         process.exitCode = 1;
       } finally {
         clearTimeout(timeout);
@@ -378,7 +397,7 @@ export async function main(argv: readonly string[] = process.argv.slice(2)): Pro
     });
     return typeof process.exitCode === "number" ? process.exitCode : 0;
   } catch (error) {
-    printError(error);
+    printError(logger, error);
     return error instanceof RegistryError && error.code === "invalid_configuration" ? 2 : 1;
   }
 }
@@ -397,7 +416,7 @@ if (isDirectExecution()) {
   void main().then((code) => {
     if (code !== 0) process.exitCode = code;
   }).catch((error: unknown) => {
-    printError(error);
+    printError(createLogger(), error);
     process.exitCode = 1;
   });
 }

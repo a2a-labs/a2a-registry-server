@@ -1,6 +1,7 @@
 import { resolve } from "node:path";
 import { fileURLToPath } from "node:url";
 import { RegistryError } from "./errors.js";
+import { isLogLevel, LOG_LEVELS, type LogLevel } from "./logger.js";
 
 const DEFAULT_UI_DIR = fileURLToPath(new URL("../ui/dist/", import.meta.url));
 
@@ -14,6 +15,8 @@ export interface RegistryConfig {
   publicUrl: string;
   /** Storage backend strategy ("memory" or "etcd"). */
   store: "memory" | "etcd";
+  /** Minimum severity emitted by the structured logger. */
+  logLevel: LogLevel;
   /** Default lease Time-To-Live in seconds if unspecified during registration. */
   defaultTtlSeconds: number;
   /** Minimum allowable lease TTL in seconds. */
@@ -53,6 +56,7 @@ export interface RegistryConfigOverrides {
   port?: number;
   publicUrl?: string;
   store?: "memory" | "etcd";
+  logLevel?: LogLevel;
   defaultTtlSeconds?: number;
   minTtlSeconds?: number;
   maxTtlSeconds?: number;
@@ -145,6 +149,15 @@ export function loadConfig(
     throw new RegistryError(500, "invalid_configuration", "REGISTRY_STORE must be memory or etcd");
   }
 
+  const configuredLogLevel = overrides.logLevel ?? environment.REGISTRY_LOG_LEVEL ?? "info";
+  if (!isLogLevel(configuredLogLevel)) {
+    throw new RegistryError(
+      500,
+      "invalid_configuration",
+      `REGISTRY_LOG_LEVEL must be one of: ${LOG_LEVELS.join(", ")}`,
+    );
+  }
+
   const port = integer("REGISTRY_PORT", Number(environment.PORT ?? 3003), 0, environment, overrides.port, 65_535);
   const minTtlSeconds = integer("REGISTRY_MIN_TTL_SECONDS", 10, 1, environment, overrides.minTtlSeconds);
   const maxTtlSeconds = integer("REGISTRY_MAX_TTL_SECONDS", 3600, minTtlSeconds, environment, overrides.maxTtlSeconds);
@@ -173,6 +186,7 @@ export function loadConfig(
     port,
     publicUrl,
     store,
+    logLevel: configuredLogLevel,
     defaultTtlSeconds,
     minTtlSeconds,
     maxTtlSeconds,

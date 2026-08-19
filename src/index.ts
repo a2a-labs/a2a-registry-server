@@ -18,6 +18,7 @@ export {
 } from "./cli.js";
 export { RegistryError } from "./errors.js";
 export { createRegistryHttpServer } from "./http.js";
+export { createLogger, isLogLevel, LOG_LEVELS, type LogLevel, type Logger } from "./logger.js";
 export { DEFAULT_INSTANCE_ID, RegistryService } from "./service.js";
 export { EtcdRegistryStore } from "./store/etcd.js";
 export { MemoryRegistryStore } from "./store/memory.js";
@@ -30,4 +31,3 @@ export type {
   RegistryStore,
   StoredAgent,
 } from "./types.js";
-

@@ -12,6 +12,7 @@ describe("registry CLI", () => {
       "--host=127.0.0.1",
       "--port", "0",
       "--store", "etcd",
+      "--log-level", "debug",
       "--default-ttl-seconds", "30",
       "--ui",
       "--ui-dir", "custom-ui",
@@ -21,6 +22,7 @@ describe("registry CLI", () => {
     assert.equal(options.overrides.host, "127.0.0.1");
     assert.equal(options.overrides.port, 0);
     assert.equal(options.overrides.store, "etcd");
+    assert.equal(options.overrides.logLevel, "debug");
     assert.equal(options.overrides.defaultTtlSeconds, 30);
     assert.equal(options.overrides.ui, true);
     assert.equal(options.overrides.uiDir, "custom-ui");
@@ -30,6 +32,7 @@ describe("registry CLI", () => {
     assert.equal(config.host, "127.0.0.1");
     assert.equal(config.port, 0);
     assert.equal(config.store, "etcd");
+    assert.equal(config.logLevel, "debug");
     assert.equal(config.ui, true);
     assert.ok(config.uiDir.endsWith("custom-ui"));
   });
@@ -38,9 +41,16 @@ describe("registry CLI", () => {
     assert.throws(() => parseCliArgs(["--unknown"]), CliUsageError);
     assert.throws(() => parseCliArgs(["--port", "not-a-number"]), CliUsageError);
     assert.throws(() => parseCliArgs(["--store", "redis"]), CliUsageError);
+    assert.throws(() => parseCliArgs(["--log-level", "verbose"]), CliUsageError);
     assert.throws(() => parseCliArgs(["--host"]), CliUsageError);
     assert.throws(() => parseCliArgs(["--ui=false"]), CliUsageError);
     assert.throws(() => loadConfig({ REGISTRY_UI: "sometimes" }), /must be a boolean/);
+    assert.throws(() => loadConfig({ REGISTRY_LOG_LEVEL: "verbose" }), /must be one of/);
+  });
+
+  it("loads the log level from the environment and lets the CLI override it", () => {
+    assert.equal(loadConfig({ REGISTRY_LOG_LEVEL: "warn" }).logLevel, "warn");
+    assert.equal(loadConfig({ REGISTRY_LOG_LEVEL: "warn" }, { logLevel: "trace" }).logLevel, "trace");
   });
 
   it("loads either supported UI environment flag", () => {
@@ -77,8 +87,10 @@ describe("registry CLI", () => {
       defaultTtlSeconds: 5,
       maxTtlSeconds: 10,
       pruneIntervalMs: 100,
+      logLevel: "silent",
     }));
     try {
+      assert.equal(runtime.logger.level, "silent");
       const address = runtime.server.address();
       assert.ok(address && typeof address !== "string");
       const response = await fetch(`http://127.0.0.1:${address.port}/health/ready`);

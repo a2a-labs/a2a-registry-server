@@ -4,6 +4,7 @@ import { createServer, type IncomingMessage, type Server, type ServerResponse } 
 import { extname, isAbsolute, relative, resolve, sep } from "node:path";
 import type { RegistryConfig } from "./config.js";
 import { isRegistryError, RegistryError } from "./errors.js";
+import { createLogger, type Logger } from "./logger.js";
 import { DEFAULT_INSTANCE_ID, RegistryService } from "./service.js";
 import { parseAgentQuery, parseRegistration, validateId, validateInstanceId } from "./validation.js";
 
@@ -264,15 +265,21 @@ function instanceLocation(id: string, instanceId: string): string {
  *
  * @param service - Configured RegistryService instance.
  * @param config - Resolved RegistryConfig instance.
+ * @param logger - Structured logger to use for request events.
  * @returns Node.js `http.Server` ready to listen.
  */
-export function createRegistryHttpServer(service: RegistryService, config: RegistryConfig): Server {
+export function createRegistryHttpServer(
+  service: RegistryService,
+  config: RegistryConfig,
+  logger: Logger = createLogger(config.logLevel),
+): Server {
   const metrics = new Metrics();
   return createServer(async (req, res) => {
     const context: RequestContext = {
       requestId: (Array.isArray(req.headers["x-request-id"]) ? req.headers["x-request-id"][0] : req.headers["x-request-id"]) ?? crypto.randomUUID(),
       startedAt: Date.now(),
     };
+    const requestLogger = logger.child({ requestId: context.requestId });
     metrics.requests += 1;
     setCommonHeaders(res, config, context.requestId);
 
@@ -504,17 +511,16 @@ export function createRegistryHttpServer(service: RegistryService, config: Regis
         requestId: context.requestId,
       }, { "Cache-Control": "no-store" });
       if (!isRegistryError(error)) {
-        console.error(JSON.stringify({ level: "error", requestId: context.requestId, error: error instanceof Error ? error.stack : String(error) }));
+        requestLogger.error({ event: "http.request.error", err: error }, "Unhandled request error");
       }
     } finally {
-      console.log(JSON.stringify({
-        level: "info",
-        requestId: context.requestId,
+      requestLogger.info({
+        event: "http.request.completed",
         method: req.method,
         path: req.url,
         status: res.statusCode,
         durationMs: Date.now() - context.startedAt,
-      }));
+      }, "Request completed");
     }
   });
 }

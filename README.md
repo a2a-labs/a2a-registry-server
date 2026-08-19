@@ -16,7 +16,7 @@ This project is a registry **for** A2A agents. Its registry REST API is intentio
 - Cursor pagination, ETags, readiness/liveness probes, Prometheus text metrics
 - In-memory backend for development and an etcd v3 backend for replicated deployments
 - Compatibility aliases for the routes and `ttlMs` field in the original PoC
-- No web framework and only one runtime dependency: the official A2A TypeScript SDK
+- No web framework; runtime dependencies are the official A2A TypeScript SDK and Pino structured logger
 
 ## Quick start
 
@@ -70,6 +70,9 @@ a2a-registry --env-file .env
 
 # Serve the built web dashboard with the API
 a2a-registry --ui
+
+# Emit only warnings and errors
+a2a-registry --log-level warn
 
 # Inspect all available options
 a2a-registry --help
@@ -229,6 +232,7 @@ PoC-compatible aliases remain available at `/v1/registry`, `/v1/registry/registe
 | `REGISTRY_PORT` | `3003` | Listen port |
 | `REGISTRY_PUBLIC_URL` | local port URL | Base URL used in service metadata |
 | `REGISTRY_STORE` | `memory` | `memory` or `etcd` |
+| `REGISTRY_LOG_LEVEL` | `info` | Minimum Pino log level: `fatal`, `error`, `warn`, `info`, `debug`, `trace`, or `silent` |
 | `REGISTRY_DEFAULT_TTL_SECONDS` | `60` | Lease TTL if omitted |
 | `REGISTRY_MIN_TTL_SECONDS` | `10` | Lowest accepted TTL |
 | `REGISTRY_MAX_TTL_SECONDS` | `3600` | Highest accepted TTL |
@@ -241,6 +245,9 @@ PoC-compatible aliases remain available at `/v1/registry`, `/v1/registry/registe
 | `ETCD_PREFIX` | `/a2a-registry/agents/` | etcd key prefix |
 | `ETCD_USERNAME`, `ETCD_PASSWORD` | unset | etcd authentication credentials |
 | `ETCD_BEARER_TOKEN` | unset | Pre-issued etcd auth token |
+
+Operational logs are emitted as newline-delimited JSON through Pino. The `--log-level`
+CLI option overrides `REGISTRY_LOG_LEVEL`; help and version output remain plain text.
 
 ## Distributed deployment with etcd
 
