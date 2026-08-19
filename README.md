@@ -22,43 +22,86 @@ This project is a registry **for** A2A agents. Its registry REST API is intentio
 
 Requirements: Node.js 22 or newer.
 
+Install the package globally via npm:
+
 ```bash
-npm install
-cp .env.example .env
-npm run dev
+npm install -g @a2a-labs/registry-server
 ```
 
-The process reads environment variables directly. If you use a `.env` file, load it with your process manager or shell. The default address is `http://localhost:3003`.
-
-The same server is available as a standalone CLI after building the package. It accepts explicit configuration flags, which take precedence over environment variables, and can load a dotenv-compatible file itself:
+Start the registry server using the CLI:
 
 ```bash
-npm run build
-node dist/cli.js --env-file .env --host 127.0.0.1 --port 3003 --store memory
+a2a-registry
 ```
 
-When installed as a package, the `a2a-registry` binary is available:
+Alternatively, run it directly without global installation using `npx`:
 
 ```bash
-npx a2a-registry --help
-a2a-registry --version
+npx @a2a-labs/registry-server
+```
+
+The server starts by default at `http://localhost:3003` using the in-memory store.
+
+### CLI options
+
+The CLI accepts configuration flags (which take precedence over environment variables) as well as dotenv-compatible files:
+
+```bash
+# Start with explicit host, port, and store
+a2a-registry --host 127.0.0.1 --port 3003 --store memory
+
+# Load configuration from a .env file
+a2a-registry --env-file .env
+
+# Inspect all available options
+a2a-registry --help
 ```
 
 Use `--help` for all options. `SIGINT` and `SIGTERM` trigger a graceful shutdown that stops accepting connections, waits for active requests, and closes the storage backend.
 
-## Agent Registry UI
+## Deploying with Docker
 
-The React/Vite dashboard now lives in the sibling `a2a-registry-ui` package. It lists agents from `/v1/agents`, supports text search and status/skill/tag/capability/protocol filters, opens a full Agent Card detail panel, and can block (unregister) an agent through a confirmation dialog.
+You can build and deploy the registry server as a lightweight container using the included multi-stage `Dockerfile`:
 
-Run it alongside this server from the workspace root:
+### 1. Build the Docker image
 
 ```bash
-cd ../a2a-registry-ui
-npm install
-npm run dev
+docker build -t a2a-registry-server .
 ```
 
-Open `http://localhost:5173`. Vite proxies `/v1` and `/health` to the registry at `http://localhost:3003`. Set `VITE_REGISTRY_API_URL` when the API is hosted elsewhere. When the API cannot be reached, the UI switches to clearly labeled sample data so the layout remains inspectable; destructive actions are local-only in that mode. Blocking a real agent requires `REGISTRY_WRITE_TOKEN` and the token can be entered in the confirmation dialog.
+### 2. Run the container
+
+```bash
+docker run -d \
+  --name a2a-registry \
+  -p 3003:3003 \
+  -e REGISTRY_PORT=3003 \
+  -e REGISTRY_STORE=memory \
+  a2a-registry-server
+```
+
+To enable a write bearer token or configure other settings, pass environment variables with `-e`:
+
+```bash
+docker run -d \
+  --name a2a-registry \
+  -p 3003:3003 \
+  -e REGISTRY_PORT=3003 \
+  -e REGISTRY_STORE=memory \
+  -e REGISTRY_WRITE_TOKEN=my-secret-token \
+  a2a-registry-server
+```
+
+### 3. Container health check
+
+The container image includes a built-in healthcheck probing `http://127.0.0.1:3003/health/ready`. You can check container status and logs:
+
+```bash
+docker ps --filter "name=a2a-registry"
+docker logs a2a-registry
+```
+
+## Registering and discovering agents
 
 Register an agent:
 
