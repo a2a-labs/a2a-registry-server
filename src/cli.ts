@@ -1,6 +1,7 @@
 #!/usr/bin/env node
 
 import { createRequire } from "node:module";
+import { realpathSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 import { fileURLToPath } from "node:url";
 import { resolve } from "node:path";
@@ -373,8 +374,17 @@ export async function main(argv: readonly string[] = process.argv.slice(2)): Pro
   }
 }
 
-const entry = process.argv[1];
-if (entry && resolve(entry) === fileURLToPath(import.meta.url)) {
+function isDirectExecution(): boolean {
+  const entry = process.argv[1];
+  if (!entry) return false;
+  try {
+    return realpathSync(resolve(entry)) === realpathSync(fileURLToPath(import.meta.url));
+  } catch {
+    return resolve(entry) === fileURLToPath(import.meta.url);
+  }
+}
+
+if (isDirectExecution()) {
   void main().then((code) => {
     if (code !== 0) process.exitCode = code;
   }).catch((error: unknown) => {
