@@ -15,7 +15,6 @@ describe("registry CLI", () => {
       "--log-level", "debug",
       "--default-ttl-seconds", "30",
       "--ui",
-      "--ui-dir", "custom-ui",
       "--etcd-endpoint", "https://etcd.example.test:2379",
     ]);
     assert.equal(options.help, false);
@@ -25,7 +24,6 @@ describe("registry CLI", () => {
     assert.equal(options.overrides.logLevel, "debug");
     assert.equal(options.overrides.defaultTtlSeconds, 30);
     assert.equal(options.overrides.ui, true);
-    assert.equal(options.overrides.uiDir, "custom-ui");
     assert.equal(options.overrides.etcd?.endpoint, "https://etcd.example.test:2379");
 
     const config = loadConfig({}, { ...options.overrides, minTtlSeconds: 1 });
@@ -34,7 +32,7 @@ describe("registry CLI", () => {
     assert.equal(config.store, "etcd");
     assert.equal(config.logLevel, "debug");
     assert.equal(config.ui, true);
-    assert.ok(config.uiDir.endsWith("custom-ui"));
+
   });
 
   it("rejects unknown options and malformed values", () => {

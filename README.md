@@ -1,5 +1,10 @@
 # A2A Registry Server
 
+[![GitHub release](https://img.shields.io/github/v/release/a2a-labs/a2a-registry-server)](https://github.com/a2a-labs/a2a-registry-server/releases/latest)
+[![GitHub stars](https://img.shields.io/github/stars/a2a-labs/a2a-registry-server)](https://github.com/a2a-labs/a2a-registry-server/stargazers)
+[![npm downloads](https://img.shields.io/npm/dm/%40a2a-labs%2Fregistry-server)](https://www.npmjs.com/package/@a2a-labs/registry-server)
+[![CI](https://github.com/a2a-labs/a2a-registry-server/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/a2a-labs/a2a-registry-server/actions/workflows/ci.yml)
+
 A lease-based registration and discovery service for logical AI agents that publish [A2A Agent Cards](https://a2a-protocol.org/latest/specification/). A logical agent can expose multiple independently leased runtime instances that share one Agent Card. The server also provides ownership tokens, TTL heartbeats, filtering, pagination, caching, metrics, tests, and an optional distributed etcd store.
 
 This project is a registry **for** A2A agents. Its registry REST API is intentionally separate from the A2A task/message protocol. The A2A specification standardizes Agent Cards and describes registries/catalogs as a discovery mechanism, but it does not prescribe one universal registry API.
