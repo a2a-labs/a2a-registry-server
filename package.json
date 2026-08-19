@@ -1,6 +1,6 @@
 {
   "name": "@a2a-labs/registry-server",
-  "version": "0.2.2",
+  "version": "0.2.3",
   "description": "A lease-based registry and discovery server for A2A agents",
   "type": "module",
   "main": "./dist/index.js",
@@ -16,13 +16,18 @@
   },
   "files": [
     "dist",
-    "openapi.yaml"
+    "openapi.yaml",
+    "ui/dist/**/*"
   ],
   "engines": {
     "node": ">=22"
   },
   "scripts": {
+    "build:ui": "npm --prefix ui run build",
     "build": "tsc -p tsconfig.json && node -e \"require('node:fs').chmodSync('dist/cli.js', 0o755)\"",
+    "build:all": "npm run build:ui && npm run build",
+    "prepack": "npm run build:all && node scripts/prepare-ui-package.mjs",
+    "postpack": "node scripts/cleanup-ui-package.mjs",
     "check": "tsc -p tsconfig.json --noEmit",
     "dev": "tsx watch src/cli.ts",
     "cli": "tsx src/cli.ts",

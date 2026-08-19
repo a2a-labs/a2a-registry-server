@@ -32,6 +32,8 @@ describe("registry HTTP API", () => {
     pruneIntervalMs: 1000,
     maxBodyBytes: 1024 * 1024,
     corsOrigin: "*",
+    ui: false,
+    uiDir: "/unused",
     etcd: { endpoint: "http://localhost:2379", prefix: "/test/" },
   };
   const server = createRegistryHttpServer(service, config);

@@ -1,6 +1,7 @@
 import { timingSafeEqual } from "node:crypto";
-import { readFile } from "node:fs/promises";
+import { readFile, realpath, stat } from "node:fs/promises";
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from "node:http";
+import { extname, isAbsolute, relative, resolve, sep } from "node:path";
 import type { RegistryConfig } from "./config.js";
 import { isRegistryError, RegistryError } from "./errors.js";
 import { DEFAULT_INSTANCE_ID, RegistryService } from "./service.js";
@@ -8,6 +9,23 @@ import { parseAgentQuery, parseRegistration, validateId, validateInstanceId } fr
 
 /** Current API version string prefix ("v1"). */
 const API_VERSION = "v1";
+
+/** Content types used by Vite output and common dashboard assets. */
+const UI_CONTENT_TYPES: Readonly<Record<string, string>> = {
+  ".css": "text/css; charset=utf-8",
+  ".html": "text/html; charset=utf-8",
+  ".ico": "image/x-icon",
+  ".jpeg": "image/jpeg",
+  ".jpg": "image/jpeg",
+  ".js": "text/javascript; charset=utf-8",
+  ".json": "application/json; charset=utf-8",
+  ".map": "application/json; charset=utf-8",
+  ".png": "image/png",
+  ".svg": "image/svg+xml",
+  ".webp": "image/webp",
+  ".woff": "font/woff",
+  ".woff2": "font/woff2",
+};
 
 /** Context object for tracking request metadata across lifecycle handlers. */
 interface RequestContext {
@@ -93,6 +111,75 @@ function json(res: ServerResponse, status: number, payload: unknown, headers: Re
     ...headers,
   });
   res.end(body);
+}
+
+/** Check that a resolved filesystem path is contained by the UI build root. */
+function isWithin(root: string, target: string): boolean {
+  const pathFromRoot = relative(root, target);
+  return pathFromRoot === "" || (pathFromRoot !== ".." && !pathFromRoot.startsWith(`..${sep}`) && !isAbsolute(pathFromRoot));
+}
+
+/** Resolve an existing regular file beneath the UI root, including through safe symlinks. */
+async function resolveUiFile(uiDir: string, pathname: string): Promise<string | undefined> {
+  let decodedPath: string;
+  try {
+    decodedPath = decodeURIComponent(pathname);
+  } catch {
+    throw new RegistryError(400, "invalid_request", "UI path is not valid URL encoding");
+  }
+  if (decodedPath.includes("\0")) throw new RegistryError(400, "invalid_request", "UI path contains an invalid character");
+
+  let root: string;
+  try {
+    root = await realpath(uiDir);
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT") return undefined;
+    throw error;
+  }
+
+  const candidate = resolve(root, `.${decodedPath.startsWith("/") ? decodedPath : `/${decodedPath}`}`);
+  if (!isWithin(root, candidate)) throw new RegistryError(400, "invalid_request", "UI path escapes the configured build directory");
+
+  try {
+    const canonical = await realpath(candidate);
+    if (!isWithin(root, canonical)) throw new RegistryError(400, "invalid_request", "UI path escapes the configured build directory");
+    return (await stat(canonical)).isFile() ? canonical : undefined;
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code === "ENOENT" || (error as NodeJS.ErrnoException).code === "ENOTDIR") return undefined;
+    throw error;
+  }
+}
+
+/** Serve a dashboard asset or its index.html SPA fallback. */
+async function serveUi(req: IncomingMessage, res: ServerResponse, config: RegistryConfig, pathname: string): Promise<void> {
+  const requested = await resolveUiFile(config.uiDir, pathname);
+  const file = requested ?? await resolveUiFile(config.uiDir, "/index.html");
+  if (!file) {
+    const body = "Registry UI build not found. Run 'npm run build:ui' or set REGISTRY_UI_DIR/--ui-dir to a built UI directory.\n";
+    res.writeHead(503, {
+      "Content-Type": "text/plain; charset=utf-8",
+      "Content-Length": Buffer.byteLength(body),
+      "Cache-Control": "no-store",
+    });
+    res.end(req.method === "HEAD" ? undefined : body);
+    return;
+  }
+
+  const body = await readFile(file);
+  const isFallback = requested === undefined || extname(file).toLowerCase() === ".html";
+  res.writeHead(200, {
+    "Content-Type": UI_CONTENT_TYPES[extname(file).toLowerCase()] ?? "application/octet-stream",
+    "Content-Length": body.byteLength,
+    "Cache-Control": isFallback ? "no-cache" : "public, max-age=3600",
+  });
+  res.end(req.method === "HEAD" ? undefined : body);
+}
+
+/** Paths that must retain API/system 404 semantics instead of falling back to the SPA. */
+function isReservedServerPath(pathname: string): boolean {
+  return pathname === "/v1" || pathname.startsWith("/v1/") || [
+    "/health", "/health/live", "/health/ready", "/metrics", "/openapi.yaml",
+  ].includes(pathname);
 }
 
 /** Extract Bearer token string from HTTP Authorization header. */
@@ -200,7 +287,7 @@ export function createRegistryHttpServer(service: RegistryService, config: Regis
       const privileged = config.writeToken !== undefined && bearer(req) !== undefined &&
         constantEquals(bearer(req) as string, config.writeToken);
 
-      if (req.method === "GET" && url.pathname === "/") {
+      if (!config.ui && req.method === "GET" && url.pathname === "/") {
         json(res, 200, {
           name: "A2A Registry Server",
           apiVersion: API_VERSION,
@@ -395,6 +482,11 @@ export function createRegistryHttpServer(service: RegistryService, config: Regis
         metrics.unregistrations += 1;
         res.writeHead(204);
         res.end();
+        return;
+      }
+
+      if (config.ui && (req.method === "GET" || req.method === "HEAD") && !isReservedServerPath(url.pathname)) {
+        await serveUi(req, res, config, url.pathname);
         return;
       }
 

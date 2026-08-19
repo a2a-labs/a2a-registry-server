@@ -60,6 +60,8 @@ Options:
       --max-body-bytes <n>         Maximum JSON request body size
       --cors-origin <origin>       Access-Control-Allow-Origin value
       --write-token <token>        Bearer token required for new registrations
+      --ui                         Serve the built web UI dashboard (REGISTRY_UI)
+      --ui-dir <path>              UI build directory (defaults to ui/dist)
       --etcd-endpoint <url>        etcd v3 JSON gateway endpoint
       --etcd-prefix <prefix>       etcd key prefix
       --etcd-username <username>   etcd username
@@ -162,6 +164,13 @@ export function parseCliArgs(args: readonly string[]): CliOptions {
         break;
       case "--write-token":
         overrides.writeToken = read(name);
+        break;
+      case "--ui":
+        if (inline !== undefined) throw new CliUsageError(`${name} does not accept a value`);
+        overrides.ui = true;
+        break;
+      case "--ui-dir":
+        overrides.uiDir = read(name);
         break;
       case "--etcd-endpoint":
         overrides.etcd = { ...overrides.etcd, endpoint: read(name) };
@@ -392,4 +401,3 @@ if (isDirectExecution()) {
     process.exitCode = 1;
   });
 }
-

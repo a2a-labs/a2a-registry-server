@@ -13,6 +13,8 @@ describe("registry CLI", () => {
       "--port", "0",
       "--store", "etcd",
       "--default-ttl-seconds", "30",
+      "--ui",
+      "--ui-dir", "custom-ui",
       "--etcd-endpoint", "https://etcd.example.test:2379",
     ]);
     assert.equal(options.help, false);
@@ -20,12 +22,16 @@ describe("registry CLI", () => {
     assert.equal(options.overrides.port, 0);
     assert.equal(options.overrides.store, "etcd");
     assert.equal(options.overrides.defaultTtlSeconds, 30);
+    assert.equal(options.overrides.ui, true);
+    assert.equal(options.overrides.uiDir, "custom-ui");
     assert.equal(options.overrides.etcd?.endpoint, "https://etcd.example.test:2379");
 
     const config = loadConfig({}, { ...options.overrides, minTtlSeconds: 1 });
     assert.equal(config.host, "127.0.0.1");
     assert.equal(config.port, 0);
     assert.equal(config.store, "etcd");
+    assert.equal(config.ui, true);
+    assert.ok(config.uiDir.endsWith("custom-ui"));
   });
 
   it("rejects unknown options and malformed values", () => {
@@ -33,6 +39,14 @@ describe("registry CLI", () => {
     assert.throws(() => parseCliArgs(["--port", "not-a-number"]), CliUsageError);
     assert.throws(() => parseCliArgs(["--store", "redis"]), CliUsageError);
     assert.throws(() => parseCliArgs(["--host"]), CliUsageError);
+    assert.throws(() => parseCliArgs(["--ui=false"]), CliUsageError);
+    assert.throws(() => loadConfig({ REGISTRY_UI: "sometimes" }), /must be a boolean/);
+  });
+
+  it("loads either supported UI environment flag", () => {
+    assert.equal(loadConfig({ REGISTRY_UI: "true" }).ui, true);
+    assert.equal(loadConfig({ REGISTRY_ENABLE_UI: "1" }).ui, true);
+    assert.equal(loadConfig({ REGISTRY_UI: "false", REGISTRY_ENABLE_UI: "true" }).ui, false);
   });
 
   it("loads a dotenv-compatible file without overriding explicit environment values", async () => {

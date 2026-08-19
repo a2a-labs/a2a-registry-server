@@ -42,6 +42,21 @@ npx @a2a-labs/registry-server
 
 The server starts by default at `http://localhost:3003` using the in-memory store.
 
+### Web dashboard
+
+The React dashboard is maintained as the `ui` Git submodule and can be served on the same port as the registry API:
+
+```bash
+git clone --recurse-submodules git@github.com:a2a-labs/a2a-registry-server.git
+cd a2a-registry-server
+npm ci
+npm --prefix ui ci
+npm run build:all
+node dist/cli.js --ui
+```
+
+When working from an existing clone, initialize the dashboard with `git submodule update --init --recursive`. The default build path is `ui/dist`; use `--ui-dir <path>` or `REGISTRY_UI_DIR` for a different static build. If the UI build is missing, dashboard requests return a clear `503` response while API and health endpoints remain available.
+
 ### CLI options
 
 The CLI accepts configuration flags (which take precedence over environment variables) as well as dotenv-compatible files:
@@ -52,6 +67,9 @@ a2a-registry --host 127.0.0.1 --port 3003 --store memory
 
 # Load configuration from a .env file
 a2a-registry --env-file .env
+
+# Serve the built web dashboard with the API
+a2a-registry --ui
 
 # Inspect all available options
 a2a-registry --help
@@ -217,6 +235,8 @@ PoC-compatible aliases remain available at `/v1/registry`, `/v1/registry/registe
 | `REGISTRY_WRITE_TOKEN` | unset | If set, registrations require `Authorization: Bearer …` |
 | `REGISTRY_CORS_ORIGIN` | `*` | CORS allow-origin value |
 | `REGISTRY_MAX_BODY_BYTES` | `1048576` | Maximum JSON body size |
+| `REGISTRY_UI` / `REGISTRY_ENABLE_UI` | `false` | Serve the built web dashboard |
+| `REGISTRY_UI_DIR` | package `ui/dist` | Static dashboard build directory |
 | `ETCD_ENDPOINT` | `http://localhost:2379` | etcd v3 JSON gateway |
 | `ETCD_PREFIX` | `/a2a-registry/agents/` | etcd key prefix |
 | `ETCD_USERNAME`, `ETCD_PASSWORD` | unset | etcd authentication credentials |

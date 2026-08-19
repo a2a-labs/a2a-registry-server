@@ -1,4 +1,8 @@
+import { resolve } from "node:path";
+import { fileURLToPath } from "node:url";
 import { RegistryError } from "./errors.js";
+
+const DEFAULT_UI_DIR = fileURLToPath(new URL("../ui/dist/", import.meta.url));
 
 /** Resolved runtime configuration options for the A2A Registry Server. */
 export interface RegistryConfig {
@@ -22,6 +26,10 @@ export interface RegistryConfig {
   maxBodyBytes: number;
   /** Origin value returned in Access-Control-Allow-Origin response headers. */
   corsOrigin: string;
+  /** Whether the server should serve the bundled web dashboard. */
+  ui: boolean;
+  /** Absolute path to the web dashboard's static build directory. */
+  uiDir: string;
   /** Optional bearer token required to authorize agent registrations. */
   writeToken?: string;
   /** Configuration options for the etcd storage backend. */
@@ -51,6 +59,8 @@ export interface RegistryConfigOverrides {
   pruneIntervalMs?: number;
   maxBodyBytes?: number;
   corsOrigin?: string;
+  ui?: boolean;
+  uiDir?: string;
   writeToken?: string;
   etcd?: Partial<RegistryConfig["etcd"]>;
 }
@@ -84,6 +94,18 @@ function optional(name: string, environment: NodeJS.ProcessEnv, override?: strin
   const value = override ?? environment[name];
   const normalized = value?.trim();
   return normalized ? normalized : undefined;
+}
+
+/** Parse a boolean environment setting while keeping programmatic overrides authoritative. */
+function boolean(name: string, environment: NodeJS.ProcessEnv, override?: boolean, alias?: string): boolean {
+  if (override !== undefined) return override;
+  const raw = environment[name] ?? (alias ? environment[alias] : undefined);
+  if (raw === undefined) return false;
+  const normalized = raw.trim().toLowerCase();
+  if (["1", "true", "yes", "on"].includes(normalized)) return true;
+  if (["0", "false", "no", "off"].includes(normalized)) return false;
+  const label = alias ? `${name} or ${alias}` : name;
+  throw new RegistryError(500, "invalid_configuration", `${label} must be a boolean`);
 }
 
 /**
@@ -140,6 +162,11 @@ export function loadConfig(
     overrides.publicUrl ?? environment.REGISTRY_PUBLIC_URL ?? `http://localhost:${port}`,
   );
   const etcdEndpoint = url("ETCD_ENDPOINT", overrides.etcd?.endpoint ?? environment.ETCD_ENDPOINT ?? "http://localhost:2379");
+  const configuredUiDir = overrides.uiDir ?? environment.REGISTRY_UI_DIR;
+  if (configuredUiDir !== undefined && !configuredUiDir.trim()) {
+    throw new RegistryError(500, "invalid_configuration", "REGISTRY_UI_DIR must not be empty");
+  }
+  const uiDir = configuredUiDir === undefined ? DEFAULT_UI_DIR : resolve(configuredUiDir.trim());
 
   return {
     host,
@@ -152,6 +179,8 @@ export function loadConfig(
     pruneIntervalMs: integer("REGISTRY_PRUNE_INTERVAL_MS", 5000, 100, environment, overrides.pruneIntervalMs),
     maxBodyBytes: integer("REGISTRY_MAX_BODY_BYTES", 1024 * 1024, 1024, environment, overrides.maxBodyBytes),
     corsOrigin: (overrides.corsOrigin ?? environment.REGISTRY_CORS_ORIGIN ?? "*").trim() || "*",
+    ui: boolean("REGISTRY_UI", environment, overrides.ui, "REGISTRY_ENABLE_UI"),
+    uiDir,
     writeToken: optional("REGISTRY_WRITE_TOKEN", environment, overrides.writeToken),
     etcd: {
       endpoint: etcdEndpoint,
@@ -162,4 +191,3 @@ export function loadConfig(
     },
   };
 }
-
