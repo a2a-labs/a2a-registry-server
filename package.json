@@ -1,5 +1,5 @@
 {
-  "name": "@a2a-labs/registry-server",
+  "name": "@a2a-lib/registry-server",
   "version": "0.2.3",
   "description": "A lease-based registry and discovery server for A2A agents",
   "type": "module",
@@ -37,7 +37,7 @@
   },
   "keywords": [
     "a2a",
-    "a2a-labs",
+    "a2a-lib",
     "a2a-registry-server",
     "a2a-registry",
     "agent2agent",

@@ -2,7 +2,7 @@
 
 [![GitHub release](https://img.shields.io/github/v/release/a2a-labs/a2a-registry-server)](https://github.com/a2a-labs/a2a-registry-server/releases/latest)
 [![GitHub stars](https://img.shields.io/github/stars/a2a-labs/a2a-registry-server)](https://github.com/a2a-labs/a2a-registry-server/stargazers)
-[![npm downloads](https://img.shields.io/npm/dm/%40a2a-labs%2Fregistry-server)](https://www.npmjs.com/package/@a2a-labs/registry-server)
+[![npm downloads](https://img.shields.io/npm/dm/%40a2a-lib%2Fregistry-server)](https://www.npmjs.com/package/@a2a-lib/registry-server)
 [![CI](https://github.com/a2a-labs/a2a-registry-server/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/a2a-labs/a2a-registry-server/actions/workflows/ci.yml)
 
 A lease-based registration and discovery service for logical AI agents that publish [A2A Agent Cards](https://a2a-protocol.org/latest/specification/). A logical agent can expose multiple independently leased runtime instances that share one Agent Card. The server also provides ownership tokens, TTL heartbeats, filtering, pagination, caching, metrics, tests, and an optional distributed etcd store.
@@ -30,7 +30,7 @@ Requirements: Node.js 22 or newer.
 Install the package globally via npm:
 
 ```bash
-npm install -g @a2a-labs/registry-server
+npm install -g @a2a-lib/registry-server
 ```
 
 Start the registry server using the CLI:
@@ -42,7 +42,7 @@ a2a-registry
 Alternatively, run it directly without global installation using `npx`:
 
 ```bash
-npx @a2a-labs/registry-server
+npx @a2a-lib/registry-server
 ```
 
 The server starts by default at `http://localhost:3003` using the in-memory store.
