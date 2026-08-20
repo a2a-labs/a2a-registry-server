@@ -1,3 +1,3 @@
 [submodule "ui"]
 	path = ui
-	url = git@github.com:a2a-lib/a2a-registry-ui.git
+	url = https://github.com/a2a-lib/a2a-registry-ui.git
