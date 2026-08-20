@@ -1,9 +1,9 @@
 # A2A Registry Server
 
-[![GitHub release](https://img.shields.io/github/v/release/a2a-labs/a2a-registry-server)](https://github.com/a2a-labs/a2a-registry-server/releases/latest)
-[![GitHub stars](https://img.shields.io/github/stars/a2a-labs/a2a-registry-server)](https://github.com/a2a-labs/a2a-registry-server/stargazers)
+[![GitHub release](https://img.shields.io/github/v/release/a2a-lib/a2a-registry-server)](https://github.com/a2a-lib/a2a-registry-server/releases/latest)
+[![GitHub stars](https://img.shields.io/github/stars/a2a-lib/a2a-registry-server)](https://github.com/a2a-lib/a2a-registry-server/stargazers)
 [![npm downloads](https://img.shields.io/npm/dm/%40a2a-lib%2Fregistry-server)](https://www.npmjs.com/package/@a2a-lib/registry-server)
-[![CI](https://github.com/a2a-labs/a2a-registry-server/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/a2a-labs/a2a-registry-server/actions/workflows/ci.yml)
+[![CI](https://github.com/a2a-lib/a2a-registry-server/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/a2a-lib/a2a-registry-server/actions/workflows/ci.yml)
 
 A lease-based registration and discovery service for logical AI agents that publish [A2A Agent Cards](https://a2a-protocol.org/latest/specification/). A logical agent can expose multiple independently leased runtime instances that share one Agent Card. The server also provides ownership tokens, TTL heartbeats, filtering, pagination, caching, metrics, tests, and an optional distributed etcd store.
 
@@ -52,7 +52,7 @@ The server starts by default at `http://localhost:3003` using the in-memory stor
 The React dashboard is maintained as the `ui` Git submodule and can be served on the same port as the registry API:
 
 ```bash
-git clone --recurse-submodules git@github.com:a2a-labs/a2a-registry-server.git
+git clone --recurse-submodules git@github.com:a2a-lib/a2a-registry-server.git
 cd a2a-registry-server
 npm ci
 npm --prefix ui ci
