@@ -2,6 +2,9 @@
 
 [![GitHub release](https://img.shields.io/github/v/release/a2a-lib/a2a-registry-server)](https://github.com/a2a-lib/a2a-registry-server/releases/latest)
 [![GitHub stars](https://img.shields.io/github/stars/a2a-lib/a2a-registry-server)](https://github.com/a2a-lib/a2a-registry-server/stargazers)
+[![Docker image version](https://img.shields.io/docker/v/digicrafts/a2a-registry?sort=semver&logo=docker&label=Docker%20image)](https://hub.docker.com/r/digicrafts/a2a-registry/tags)
+[![Docker pulls](https://img.shields.io/docker/pulls/digicrafts/a2a-registry?logo=docker&label=Docker%20pulls)](https://hub.docker.com/r/digicrafts/a2a-registry)
+[![npm version](https://img.shields.io/npm/v/%40a2a-lib%2Fregistry-server)](https://www.npmjs.com/package/@a2a-lib/registry-server)
 [![npm downloads](https://img.shields.io/npm/dm/%40a2a-lib%2Fregistry-server)](https://www.npmjs.com/package/@a2a-lib/registry-server)
 [![CI](https://github.com/a2a-lib/a2a-registry-server/actions/workflows/ci.yml/badge.svg?branch=main)](https://github.com/a2a-lib/a2a-registry-server/actions/workflows/ci.yml)
 
@@ -87,38 +90,94 @@ Use `--help` for all options. `SIGINT` and `SIGTERM` trigger a graceful shutdown
 
 ## Deploying with Docker
 
-You can build and deploy the registry server as a lightweight container using the included multi-stage `Dockerfile`:
+The registry server is available as the published Docker Hub image [`digicrafts/a2a-registry`](https://hub.docker.com/repository/docker/digicrafts/a2a-registry). The image includes the API, optional web UI, a non-root runtime user, and a readiness healthcheck on port `3003`.
 
-### 1. Build the Docker image
+### Use the published Docker image
+
+Pull a specific release tag for repeatable deployments:
 
 ```bash
-docker build -t a2a-registry-server .
+docker pull digicrafts/a2a-registry:0.2.5
 ```
 
-### 2. Run the container
+Run the registry with the in-memory store:
 
 ```bash
 docker run -d \
   --name a2a-registry \
+  --restart unless-stopped \
   -p 3003:3003 \
   -e REGISTRY_PORT=3003 \
   -e REGISTRY_STORE=memory \
-  a2a-registry-server
+  digicrafts/a2a-registry:0.2.5
 ```
 
-To enable a write bearer token or configure other settings, pass environment variables with `-e`:
+The `latest` tag is also available, but version tags are recommended for production:
+
+```bash
+docker pull digicrafts/a2a-registry:latest
+```
+
+To enable a write bearer token, pass it at runtime rather than storing it in the image:
 
 ```bash
 docker run -d \
   --name a2a-registry \
+  --restart unless-stopped \
   -p 3003:3003 \
   -e REGISTRY_PORT=3003 \
   -e REGISTRY_STORE=memory \
   -e REGISTRY_WRITE_TOKEN=my-secret-token \
-  a2a-registry-server
+  digicrafts/a2a-registry:0.2.5
 ```
 
-### 3. Container health check
+For a distributed deployment, use `REGISTRY_STORE=etcd` and configure `ETCD_ENDPOINT`, `ETCD_PREFIX`, and any required etcd credentials. See [Distributed deployment with etcd](#distributed-deployment-with-etcd).
+
+### Build the Docker image locally
+
+You can also build and deploy the registry server as a lightweight container using the included multi-stage `Dockerfile`:
+
+```bash
+docker build -t digicrafts/a2a-registry:local .
+```
+
+Run the local image:
+
+```bash
+docker run -d \
+  --name a2a-registry \
+  -p 3003:3003 \
+  -e REGISTRY_PORT=3003 \
+  -e REGISTRY_STORE=memory \
+  digicrafts/a2a-registry:local
+```
+
+### Publish a Docker image
+
+Log in to Docker Hub and publish both a release tag and `latest`. The following command creates a multi-platform image for Linux AMD64 and ARM64:
+
+```bash
+docker login
+
+docker buildx create \
+  --name digicrafts-builder \
+  --driver docker-container \
+  --use
+
+docker buildx inspect --bootstrap
+
+docker buildx build \
+  --platform linux/amd64,linux/arm64 \
+  --pull \
+  -t digicrafts/a2a-registry:0.2.5 \
+  -t digicrafts/a2a-registry:latest \
+  --push \
+  .
+```
+
+If you only need one architecture, use `docker build` followed by `docker push` instead. The Docker daemon must be running before building or running containers.
+
+### Container health check
 
 The container image includes a built-in healthcheck probing `http://127.0.0.1:3003/health/ready`. You can check container status and logs:
 
