@@ -20,6 +20,7 @@ export { RegistryError } from "./errors.js";
 export { createRegistryHttpServer } from "./http.js";
 export { createLogger, isLogLevel, LOG_LEVELS, type LogLevel, type Logger } from "./logger.js";
 export { DEFAULT_INSTANCE_ID, RegistryService } from "./service.js";
+export { SERVER_VERSION } from "./version.js";
 export { EtcdRegistryStore } from "./store/etcd.js";
 export { MemoryRegistryStore } from "./store/memory.js";
 export type {

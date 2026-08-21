@@ -1,11 +1,22 @@
 openapi: 3.1.0
 info:
   title: A2A Registry API
-  version: 0.2.4
+  version: 0.2.5
   description: Lease-based registration and discovery for logical A2A agents with independently leased runtime instances. This registry API is not an A2A task/message transport.
 servers:
   - url: http://localhost:3003
 paths:
+  /v1:
+    get:
+      summary: Get registry server metadata
+      description: Returns public information about the running registry for dashboards and API clients.
+      responses:
+        '200':
+          description: Registry server metadata
+          content:
+            application/json:
+              schema:
+                $ref: '#/components/schemas/ServerInfo'
   /v1/agents:
     post:
       summary: Register an agent instance
@@ -232,6 +243,18 @@ components:
         application/json:
           schema: { $ref: '#/components/schemas/Problem' }
   schemas:
+    ServerInfo:
+      type: object
+      required: [name, version, apiVersion, url, status, store, documentation, endpoints]
+      properties:
+        name: { type: string }
+        version: { type: string }
+        apiVersion: { type: string }
+        url: { type: string, format: uri }
+        status: { type: string, enum: [ready, not_ready] }
+        store: { type: string }
+        documentation: { type: string, format: uri }
+        endpoints: { type: object, additionalProperties: { type: string } }
     AgentCard:
       type: object
       description: A2A Agent Card. Unknown fields are preserved for forward compatibility.

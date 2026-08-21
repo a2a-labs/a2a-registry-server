@@ -92,6 +92,29 @@ describe("registry HTTP API", () => {
     assert.equal((await fetch(`${baseUrl}/v1/agents/weather-1`)).status, 404);
   });
 
+  it("exposes public server metadata for dashboards", async () => {
+    const response = await fetch(`${baseUrl}/v1`);
+    assert.equal(response.status, 200);
+    const metadata = await response.json() as {
+      name: string;
+      version: string;
+      apiVersion: string;
+      url: string;
+      status: string;
+      store: string;
+      documentation: string;
+      endpoints: { agents: string };
+    };
+    assert.equal(metadata.name, "A2A Registry Server");
+    assert.match(metadata.version, /^\d+\.\d+\.\d+$/u);
+    assert.equal(metadata.apiVersion, "v1");
+    assert.equal(metadata.url, "http://127.0.0.1");
+    assert.equal(metadata.status, "ready");
+    assert.equal(metadata.store, "memory");
+    assert.equal(metadata.documentation, "http://127.0.0.1/openapi.yaml");
+    assert.equal(metadata.endpoints.agents, "/v1/agents");
+  });
+
   it("supports the PoC registration and heartbeat aliases", async () => {
     const response = await fetch(`${baseUrl}/v1/registry/register`, {
       method: "POST",

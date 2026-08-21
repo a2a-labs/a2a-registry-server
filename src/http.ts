@@ -7,6 +7,7 @@ import { isRegistryError, RegistryError } from "./errors.js";
 import { createLogger, type Logger } from "./logger.js";
 import { DEFAULT_INSTANCE_ID, RegistryService } from "./service.js";
 import { parseAgentQuery, parseRegistration, validateId, validateInstanceId } from "./validation.js";
+import { SERVER_VERSION } from "./version.js";
 
 /** Current API version string prefix ("v1"). */
 const API_VERSION = "v1";
@@ -258,6 +259,27 @@ function instanceLocation(id: string, instanceId: string): string {
     : `/v1/agents/${encodeURIComponent(id)}/instances/${encodeURIComponent(instanceId)}`;
 }
 
+/** Build the public server metadata payload used by the dashboard and API clients. */
+function serverInfo(config: RegistryConfig, service: RegistryService, ready: boolean): Record<string, unknown> {
+  const baseUrl = config.publicUrl.replace(/\/$/u, "");
+  return {
+    name: "A2A Registry Server",
+    version: SERVER_VERSION,
+    apiVersion: API_VERSION,
+    url: baseUrl,
+    status: ready ? "ready" : "not_ready",
+    store: service.storeName,
+    documentation: `${baseUrl}/openapi.yaml`,
+    endpoints: {
+      metadata: "/v1",
+      agents: "/v1/agents",
+      liveness: "/health/live",
+      readiness: "/health/ready",
+      metrics: "/metrics",
+    },
+  };
+}
+
 /**
  * Factory function creating a Node.js HTTP server instance wired to the RegistryService
  * and RegistryConfig. Handles route dispatch, authentication, OpenAPI specs, health checks,
@@ -295,12 +317,11 @@ export function createRegistryHttpServer(
         constantEquals(bearer(req) as string, config.writeToken);
 
       if (!config.ui && req.method === "GET" && url.pathname === "/") {
-        json(res, 200, {
-          name: "A2A Registry Server",
-          apiVersion: API_VERSION,
-          documentation: `${config.publicUrl.replace(/\/$/, "")}/openapi.yaml`,
-          endpoints: { agents: "/v1/agents", liveness: "/health/live", readiness: "/health/ready", metrics: "/metrics" },
-        });
+        json(res, 200, serverInfo(config, service, await service.ready()), { "Cache-Control": "no-store" });
+        return;
+      }
+      if (req.method === "GET" && url.pathname === "/v1") {
+        json(res, 200, serverInfo(config, service, await service.ready()), { "Cache-Control": "no-store" });
         return;
       }
       if (req.method === "GET" && url.pathname === "/openapi.yaml") {
